@@ -13,7 +13,7 @@ import { ExperimentsTimelineChart } from '../../components/dashboard/experiments
 import { ExperimentsStatusChart } from '../../components/dashboard/experiments-status-chart';
 import { DailyTokenUsageChart } from '../../components/dashboard/daily-token-usage-chart';
 import { subDays, subMonths } from 'date-fns';
-import { FlaskConical, Play, Coins } from 'lucide-react';
+import { FlaskConical, Play, Sparkles } from 'lucide-react';
 
 type TimeRange = '7days' | '1month' | '3months';
 
@@ -129,7 +129,7 @@ export function DashboardPage() {
                   </p>
                 </div>
                 <div className="p-1.5 bg-orange-100 rounded-lg">
-                  <Coins className="h-3.5 w-3.5 text-orange-600" />
+                  <Sparkles className="h-3.5 w-3.5 text-orange-600" />
                 </div>
               </div>
             </CardContent>
