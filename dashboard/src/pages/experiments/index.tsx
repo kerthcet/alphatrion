@@ -436,15 +436,17 @@ export function ExperimentsPage() {
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <DialogContent className="pointer-events-auto">
-          <DialogHeader>
-            <DialogTitle>Delete Experiments</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete {selectedExperiments.size} {selectedExperiments.size === 1 ? 'experiment' : 'experiments'}?
+        <DialogContent className="pointer-events-auto sm:max-w-[440px]">
+          <DialogHeader className="space-y-3">
+            <DialogTitle className="text-lg font-semibold text-foreground">
+              Delete {selectedExperiments.size === 1 ? 'Experiment' : 'Experiments'}
+            </DialogTitle>
+            <DialogDescription className="text-sm text-muted-foreground leading-relaxed">
+              You are about to delete <span className="font-medium text-foreground">{selectedExperiments.size}</span> {selectedExperiments.size === 1 ? 'experiment' : 'experiments'}.
               This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2">
+          <DialogFooter className="gap-2 sm:gap-2">
             <Button
               type="button"
               variant="outline"
@@ -454,6 +456,7 @@ export function ExperimentsPage() {
                 setShowDeleteDialog(false);
               }}
               disabled={deleteExperimentsMutation.isPending}
+              className="h-9"
             >
               Cancel
             </Button>
@@ -462,8 +465,19 @@ export function ExperimentsPage() {
               variant="destructive"
               onClick={handleDeleteConfirm}
               disabled={deleteExperimentsMutation.isPending}
+              className="h-9"
             >
-              {deleteExperimentsMutation.isPending ? 'Deleting...' : 'Delete'}
+              {deleteExperimentsMutation.isPending ? (
+                <>
+                  <span className="mr-2">Deleting...</span>
+                  <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-solid border-current border-r-transparent"></span>
+                </>
+              ) : (
+                <>
+                  <Trash2 className="h-3.5 w-3.5 mr-2" />
+                  Delete
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
