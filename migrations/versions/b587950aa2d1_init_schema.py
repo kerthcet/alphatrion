@@ -1,8 +1,8 @@
 """init schema
 
-Revision ID: 521625680c48
+Revision ID: b587950aa2d1
 Revises: 
-Create Date: 2026-03-21 19:26:10.577512
+Create Date: 2026-03-24 23:23:23.225944
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '521625680c48'
+revision: str = 'b587950aa2d1'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -104,6 +104,16 @@ def upgrade() -> None:
     )
     op.create_index('idx_metric_experiment_time', 'metrics', ['experiment_id', 'created_at'], unique=False)
     op.create_index('idx_metric_run_time', 'metrics', ['run_id', 'created_at'], unique=False)
+    op.create_table('orgs',
+    sa.Column('uuid', sa.UUID(), nullable=False),
+    sa.Column('name', sa.String(), nullable=False),
+    sa.Column('description', sa.String(), nullable=True),
+    sa.Column('meta', sa.JSON(), nullable=True, comment='Additional metadata for the org'),
+    sa.Column('created_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('is_del', sa.Integer(), nullable=True, comment='0 for not deleted, 1 for deleted'),
+    sa.PrimaryKeyConstraint('uuid')
+    )
     op.create_table('runs',
     sa.Column('uuid', sa.UUID(), nullable=False),
     sa.Column('team_id', sa.UUID(), nullable=False),
@@ -156,7 +166,7 @@ def upgrade() -> None:
     )
     op.create_table('users',
     sa.Column('uuid', sa.UUID(), nullable=False),
-    sa.Column('username', sa.String(), nullable=False),
+    sa.Column('name', sa.String(), nullable=False),
     sa.Column('email', sa.String(), nullable=False),
     sa.Column('avatar_url', sa.String(), nullable=True),
     sa.Column('meta', sa.JSON(), nullable=True, comment='Additional metadata for the user'),
@@ -181,6 +191,7 @@ def downgrade() -> None:
     op.drop_index('idx_run_session_active', table_name='runs')
     op.drop_index('idx_run_experiment_active', table_name='runs')
     op.drop_table('runs')
+    op.drop_table('orgs')
     op.drop_index('idx_metric_run_time', table_name='metrics')
     op.drop_index('idx_metric_experiment_time', table_name='metrics')
     op.drop_table('metrics')
