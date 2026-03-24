@@ -182,7 +182,7 @@ def init_command(args):
         console.print(
             Text(f"👤 Creating user: {user_name} ({email})", style="bold cyan")
         )
-        user_id = metadb.create_user(username=user_name, email=email)
+        user_id = metadb.create_user(name=user_name, email=email)
 
         # Create team
         console.print(Text(f"🏢 Creating team: {team_name}", style="bold cyan"))

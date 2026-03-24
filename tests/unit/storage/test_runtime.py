@@ -9,7 +9,7 @@ async def test_init_without_team_id():
     runtime.init()
     team_id = runtime.storage_runtime().metadb.create_team(name="team1")
     user_id = runtime.storage_runtime().metadb.create_user(
-        username="user1", email="user1@example.com", team_id=team_id
+        name="user1", email="user1@example.com", team_id=team_id
     )
 
     init(user_id=user_id)

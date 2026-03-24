@@ -129,7 +129,7 @@ def test_query_teams():
         name="Test Team2", description="Another team for testing", meta={"baz": 123}
     )
     user_id = metadb.create_user(
-        username="tester",
+        name="tester",
         email="example@inftyai.com",
         meta={"foo": "bar"},
         team_id=team1_id,
@@ -166,7 +166,7 @@ def test_query_user():
     )
 
     user_id = metadb.create_user(
-        username="tester",
+        name="tester",
         email="tester@inftyai.com",
         meta={"foo": "bar"},
     )
@@ -178,7 +178,7 @@ def test_query_user():
     query {{
         user(id: "{user_id}") {{
             id
-            username
+            name
             email
             meta
             teams {{
@@ -195,7 +195,7 @@ def test_query_user():
         variable_values={},
     )
     assert response.errors is None
-    assert response.data["user"]["username"] == "tester"
+    assert response.data["user"]["name"] == "tester"
     assert response.data["user"]["email"] == "tester@inftyai.com"
     assert len(response.data["user"]["teams"]) == 1
     assert response.data["user"]["teams"][0]["id"] == str(team_id)

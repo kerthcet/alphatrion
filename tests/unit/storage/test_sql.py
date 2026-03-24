@@ -89,14 +89,14 @@ def test_create_user_with_team(db):
     team_id = db.create_team(name="Test Team", description="A test team")
 
     user_id = db.create_user(
-        username="tester",
+        name="tester",
         email="tester@example.com",
         team_id=team_id,
         meta={"role": "engineer", "level": "senior"},
     )
     user = db.get_user(user_id)
     assert user is not None
-    assert user.username == "tester"
+    assert user.name == "tester"
     assert user.email == "tester@example.com"
     assert user.meta == {"role": "engineer", "level": "senior"}
     teams = db.list_user_teams(user_id)
@@ -106,13 +106,13 @@ def test_create_user_with_team(db):
 
 def test_create_user_without_team(db):
     user_id = db.create_user(
-        username="tester",
+        name="tester",
         email="tester@example.com",
         meta={"role": "engineer", "level": "senior"},
     )
     user = db.get_user(user_id)
     assert user is not None
-    assert user.username == "tester"
+    assert user.name == "tester"
     assert user.email == "tester@example.com"
     assert user.meta == {"role": "engineer", "level": "senior"}
     teams = db.list_user_teams(user_id)

@@ -106,7 +106,7 @@ class Team:
 @strawberry.type
 class User:
     id: strawberry.ID
-    username: str
+    name: str
     email: str
     avatar_url: str | None
     meta: JSON | None
@@ -342,7 +342,7 @@ class Dataset:
 @strawberry.input
 class CreateUserInput:
     id: strawberry.ID | None = None
-    username: str
+    name: str
     email: str
     avatar_url: str | None = None
     meta: JSON | None = None

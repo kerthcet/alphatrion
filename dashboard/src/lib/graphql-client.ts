@@ -91,7 +91,7 @@ export const queries = {
     query GetUser($id: ID!) {
       user(id: $id) {
         id
-        username
+        name
         email
         avatarUrl
         meta

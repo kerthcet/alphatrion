@@ -20,7 +20,7 @@ class MetaStore(ABC):
     @abstractmethod
     def create_user(
         self,
-        username: str,
+        name: str,
         email: str,
         avatar_url: str | None = None,
         team_id: uuid.UUID | None = None,

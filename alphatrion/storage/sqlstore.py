@@ -90,7 +90,7 @@ class SQLStore(MetaStore):
     # the user id is already determined.
     def create_user(
         self,
-        username: str,
+        name: str,
         email: str,
         uuid: uuid.UUID | None = None,
         avatar_url: str | None = None,
@@ -98,7 +98,7 @@ class SQLStore(MetaStore):
         meta: dict | None = None,
     ) -> uuid.UUID:
         user = User(
-            username=username,
+            name=name,
             email=email,
             avatar_url=avatar_url,
             meta=meta,

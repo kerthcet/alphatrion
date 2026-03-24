@@ -84,7 +84,7 @@ class GraphQLResolvers:
         if user:
             return User(
                 id=user.uuid,
-                username=user.username,
+                name=user.name,
                 email=user.email,
                 avatar_url=user.avatar_url,
                 meta=user.meta,
@@ -1047,7 +1047,7 @@ class GraphQLMutations:
         metadb = runtime.storage_runtime().metadb
         user_id = metadb.create_user(
             uuid=uuid.UUID(input.id) if input.id else None,
-            username=input.username,
+            name=input.name,
             email=input.email,
             avatar_url=input.avatar_url,
             meta=input.meta,
@@ -1056,14 +1056,14 @@ class GraphQLMutations:
         if user:
             return User(
                 id=user.uuid,
-                username=user.username,
+                name=user.name,
                 email=user.email,
                 avatar_url=user.avatar_url,
                 meta=user.meta,
                 created_at=user.created_at,
                 updated_at=user.updated_at,
             )
-        msg = f"Failed to create user with username {input.username}"
+        msg = f"Failed to create user with name {input.name}"
         raise RuntimeError(msg)
 
     @staticmethod
@@ -1078,7 +1078,7 @@ class GraphQLMutations:
 
         return User(
             id=user.uuid,
-            username=user.username,
+            name=user.name,
             email=user.email,
             avatar_url=user.avatar_url,
             meta=user.meta,

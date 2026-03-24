@@ -107,12 +107,12 @@ def test_create_user_mutation():
     mutation = f"""
     mutation {{
         createUser(input: {{
-            username: "{username}"
+            name: "{username}"
             email: "{email}"
             meta: {{role: "engineer", level: "senior"}}
         }}) {{
             id
-            username
+            name
             email
             meta
             createdAt
@@ -129,7 +129,7 @@ def test_create_user_mutation():
         variable_values={},
     )
     assert response.errors is None
-    assert response.data["createUser"]["username"] == username
+    assert response.data["createUser"]["name"] == username
     assert response.data["createUser"]["email"] == email
     assert response.data["createUser"]["meta"] == {
         "role": "engineer",
@@ -141,7 +141,7 @@ def test_create_user_mutation():
     user_id = uuid.UUID(response.data["createUser"]["id"])
     user = metadb.get_user(user_id=user_id)
     assert user is not None
-    assert user.username == username
+    assert user.name == username
 
 
 def test_create_user_mutation_with_uuid():
@@ -156,12 +156,12 @@ def test_create_user_mutation_with_uuid():
     mutation {{
         createUser(input: {{
             id: "{str(id)}"
-            username: "{username}"
+            name: "{username}"
             email: "{email}"
             meta: {{role: "engineer", level: "senior"}}
         }}) {{
             id
-            username
+            name
             email
             meta
             createdAt
@@ -193,7 +193,7 @@ def test_add_user_to_team_mutation():
 
     # Create a user (without team initially)
     user_id = metadb.create_user(
-        username=unique_username("testuser"),
+        name=unique_username("testuser"),
         email=unique_email("test"),
     )
 
@@ -235,7 +235,7 @@ def test_add_user_to_multiple_teams():
 
     # Create a user
     user_id = metadb.create_user(
-        username=unique_username("multiuser"),
+        name=unique_username("multiuser"),
         email=unique_email("multi"),
     )
 
@@ -280,7 +280,7 @@ def test_add_user_to_team_with_invalid_team():
 
     # Create a user
     user_id = metadb.create_user(
-        username=unique_username("invalidteamuser"),
+        name=unique_username("invalidteamuser"),
         email=unique_email("invalidteam"),
     )
 
@@ -371,12 +371,12 @@ def test_user_workflow():
     mutation3 = f"""
     mutation {{
         createUser(input: {{
-            username: "{username}"
+            name: "{username}"
             email: "{email}"
             meta: {{title: "Software Engineer"}}
         }}) {{
             id
-            username
+            name
             teams {{
                 id
             }}
@@ -419,7 +419,7 @@ def test_user_workflow():
     query {{
         user(id: "{user_id}") {{
             id
-            username
+            name
             teams {{
                 id
                 name
@@ -442,7 +442,7 @@ def test_remove_user_from_team_mutation():
 
     # Create a user and add to team
     user_id = metadb.create_user(
-        username=unique_username("removetest"),
+        name=unique_username("removetest"),
         email=unique_email("removetest"),
         team_id=team_id,
     )
@@ -478,7 +478,7 @@ def test_update_user():
     metadb = runtime.storage_runtime().metadb
 
     user_id = metadb.create_user(
-        username="tester",
+        name="tester",
         email="tester@example.com",
         meta={"foo": "bar"},
     )
@@ -490,7 +490,7 @@ def test_update_user():
             meta: {{foo: "fuz", newKey: "newValue"}}
         }}) {{
             id
-            username
+            name
             email
             meta
         }}
@@ -512,7 +512,7 @@ def test_delete_experiment():
     # Create a team and experiment
     team_id = metadb.create_team(name="Experiment Team")
     user_id = metadb.create_user(
-        username=unique_username("expuser"),
+        name=unique_username("expuser"),
         email=unique_email("expuser"),
         team_id=team_id,
     )
@@ -551,7 +551,7 @@ def test_delete_experiments_batch():
     # Create a team and user
     team_id = metadb.create_team(name="Batch Delete Team")
     user_id = metadb.create_user(
-        username=unique_username("batchuser"),
+        name=unique_username("batchuser"),
         email=unique_email("batchuser"),
         team_id=team_id,
     )
@@ -599,7 +599,7 @@ def test_delete_experiments_partial():
     # Create a team and user
     team_id = metadb.create_team(name="Partial Delete Team")
     user_id = metadb.create_user(
-        username=unique_username("partialuser"),
+        name=unique_username("partialuser"),
         email=unique_email("partialuser"),
         team_id=team_id,
     )
@@ -659,7 +659,7 @@ def test_delete_experiments_already_deleted():
     # Create a team and user
     team_id = metadb.create_team(name="Already Deleted Team")
     user_id = metadb.create_user(
-        username=unique_username("deluser"),
+        name=unique_username("deluser"),
         email=unique_email("deluser"),
         team_id=team_id,
     )
@@ -696,7 +696,7 @@ def test_delete_experiment_deletes_runs():
     # Create a team, user, and experiment
     team_id = metadb.create_team(name="Run Delete Team")
     user_id = metadb.create_user(
-        username=unique_username("runuser"),
+        name=unique_username("runuser"),
         email=unique_email("runuser"),
         team_id=team_id,
     )
@@ -747,7 +747,7 @@ def test_delete_experiments_batch_deletes_runs():
     # Create a team and user
     team_id = metadb.create_team(name="Batch Run Delete Team")
     user_id = metadb.create_user(
-        username=unique_username("batchrunuser"),
+        name=unique_username("batchrunuser"),
         email=unique_email("batchrunuser"),
         team_id=team_id,
     )
@@ -808,7 +808,7 @@ def test_delete_running_experiment_fails():
     # Create a team, user, and experiment
     team_id = metadb.create_team(name="Running Experiment Team")
     user_id = metadb.create_user(
-        username=unique_username("runninguser"),
+        name=unique_username("runninguser"),
         email=unique_email("runninguser"),
         team_id=team_id,
     )
@@ -850,7 +850,7 @@ def test_delete_experiments_skips_running():
     # Create a team and user
     team_id = metadb.create_team(name="Mixed Status Team")
     user_id = metadb.create_user(
-        username=unique_username("mixeduser"),
+        name=unique_username("mixeduser"),
         email=unique_email("mixeduser"),
         team_id=team_id,
     )
@@ -924,7 +924,7 @@ def test_delete_experiments_all_running():
     # Create a team and user
     team_id = metadb.create_team(name="All Running Team")
     user_id = metadb.create_user(
-        username=unique_username("allrunninguser"),
+        name=unique_username("allrunninguser"),
         email=unique_email("allrunninguser"),
         team_id=team_id,
     )

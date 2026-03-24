@@ -39,6 +39,26 @@ StatusMap = {
 
 FINISHED_STATUS = [Status.COMPLETED, Status.FAILED, Status.CANCELLED]
 
+class Org(Base):
+    __tablename__ = "orgs"
+
+    uuid = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    meta = Column(
+        MutableDict.as_mutable(JSON),
+        nullable=True,
+        comment="Additional metadata for the org",
+    )
+
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    is_del = Column(Integer, default=0, comment="0 for not deleted, 1 for deleted")
+
 
 class Team(Base):
     __tablename__ = "teams"
@@ -65,7 +85,7 @@ class User(Base):
     __tablename__ = "users"
 
     uuid = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    username = Column(String, nullable=False)
+    name = Column(String, nullable=False)
     email = Column(String, nullable=False, unique=True)
     avatar_url = Column(String, nullable=True)
     meta = Column(
