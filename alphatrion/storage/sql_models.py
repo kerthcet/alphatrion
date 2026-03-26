@@ -39,8 +39,8 @@ StatusMap = {
 
 FINISHED_STATUS = [Status.COMPLETED, Status.FAILED, Status.CANCELLED]
 
-class Org(Base):
-    __tablename__ = "orgs"
+class Organization(Base):
+    __tablename__ = "organizations"
 
     uuid = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String, nullable=False)
@@ -64,6 +64,7 @@ class Team(Base):
     __tablename__ = "teams"
 
     uuid = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), nullable=False, comment="Organization ID")
     name = Column(String, nullable=False)
     description = Column(String, nullable=True)
     meta = Column(
@@ -85,6 +86,7 @@ class User(Base):
     __tablename__ = "users"
 
     uuid = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), nullable=False, comment="Organization ID")
     name = Column(String, nullable=False)
     email = Column(String, nullable=False, unique=True)
     avatar_url = Column(String, nullable=True)
@@ -107,6 +109,7 @@ class TeamMember(Base):
     __tablename__ = "team_members"
 
     uuid = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), nullable=False, comment="Organization ID")
     team_id = Column(UUID(as_uuid=True), nullable=False)
     user_id = Column(UUID(as_uuid=True), nullable=False, index=True)
 
@@ -138,6 +141,7 @@ class Experiment(Base):
     __tablename__ = "experiments"
 
     uuid = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), nullable=False, comment="Organization ID")
     team_id = Column(UUID(as_uuid=True), nullable=False)
     user_id = Column(
         UUID(as_uuid=True), nullable=True, comment="User who created the experiment"
@@ -207,6 +211,7 @@ class Agent(Base):
     __tablename__ = "agents"
 
     uuid = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), nullable=False, comment="Organization ID")
     team_id = Column(UUID(as_uuid=True), nullable=False)
     user_id = Column(
         UUID(as_uuid=True), nullable=False, comment="User who created the agent"
@@ -238,6 +243,7 @@ class AgentSession(Base):
     __tablename__ = "sessions"
 
     uuid = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), nullable=False, comment="Organization ID")
     team_id = Column(UUID(as_uuid=True), nullable=False)
     user_id = Column(
         UUID(as_uuid=True), nullable=False, comment="User who created the session"
@@ -264,6 +270,7 @@ class Run(Base):
     __tablename__ = "runs"
 
     uuid = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), nullable=False, comment="Organization ID")
     team_id = Column(UUID(as_uuid=True), nullable=False)
     user_id = Column(
         UUID(as_uuid=True), nullable=False, comment="User who created the run"
@@ -348,6 +355,7 @@ class Metric(Base):
     uuid = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     key = Column(String, nullable=False)
     value = Column(Float, nullable=False)
+    org_id = Column(UUID(as_uuid=True), nullable=False, comment="Organization ID")
     team_id = Column(UUID(as_uuid=True), nullable=False)
     experiment_id = Column(UUID(as_uuid=True), nullable=False)
     run_id = Column(UUID(as_uuid=True), nullable=False)
@@ -369,6 +377,7 @@ class ExperimentLabel(Base):
     __tablename__ = "experiment_labels"
 
     uuid = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), nullable=False, comment="Organization ID")
     team_id = Column(UUID(as_uuid=True), nullable=False)
     experiment_id = Column(UUID(as_uuid=True), nullable=False)
     label_name = Column(String, nullable=False)
@@ -396,6 +405,7 @@ class ExperimentTag(Base):
     __tablename__ = "experiment_tags"
 
     uuid = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id = Column(UUID(as_uuid=True), nullable=False, comment="Organization ID")
     team_id = Column(UUID(as_uuid=True), nullable=False)
     experiment_id = Column(UUID(as_uuid=True), nullable=False)
     tag = Column(String, nullable=False)
@@ -424,6 +434,7 @@ class Dataset(Base):
         nullable=True,
         comment="Additional metadata for the dataset",
     )
+    org_id = Column(UUID(as_uuid=True), nullable=False, comment="Organization ID")
     team_id = Column(UUID(as_uuid=True), nullable=False)
     experiment_id = Column(UUID(as_uuid=True), nullable=True)
     run_id = Column(UUID(as_uuid=True), nullable=True)

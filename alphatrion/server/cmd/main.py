@@ -182,12 +182,13 @@ def init_command(args):
         console.print(
             Text(f"👤 Creating user: {user_name} ({email})", style="bold cyan")
         )
-        user_id = metadb.create_user(name=user_name, email=email)
+        org_id = metadb.create_organization(name=fake.name() + " Org")
+        user_id = metadb.create_user(name=user_name, email=email, org_id=org_id)
 
         # Create team
         console.print(Text(f"🏢 Creating team: {team_name}", style="bold cyan"))
         team_id = metadb.create_team(
-            name=team_name, description=f"Team for {user_name}"
+            name=team_name, description=f"Team for {user_name}", org_id=org_id
         )
         # Add user to team
         metadb.add_user_to_team(user_id=user_id, team_id=team_id)

@@ -21,7 +21,8 @@ from alphatrion.tracing import tracing
 def test_query_single_team():
     runtime.init()
     metadb = runtime.storage_runtime().metadb
-    id = metadb.create_team(name="Test Team", description="A team for testing")
+    org_id = uuid.uuid4()
+    id = metadb.create_team(org_id=org_id, name="Test Team", description="A team for testing")
 
     now = datetime.now()
     yesterday = now - timedelta(days=1)
@@ -66,9 +67,11 @@ def test_query_team_with_experiments():
     user_id = uuid.uuid4()
     runtime.init()
     metadb = runtime.storage_runtime().metadb
-    team_id = metadb.create_team(name="Test Team", description="A team for testing")
+    org_id = uuid.uuid4()
+    team_id = metadb.create_team(org_id=org_id, name="Test Team", description="A team for testing")
 
     exp_id = metadb.create_experiment(
+        org_id=org_id,
         name="Test Experiment",
         team_id=team_id,
         user_id=user_id,
@@ -77,11 +80,13 @@ def test_query_team_with_experiments():
     )
 
     _ = metadb.create_run(
+        org_id=org_id,
         team_id=team_id,
         user_id=user_id,
         experiment_id=exp_id,
     )
     _ = metadb.create_run(
+        org_id=org_id,
         team_id=team_id,
         user_id=user_id,
         experiment_id=exp_id,
@@ -122,13 +127,17 @@ def test_query_teams():
     runtime.init()
 
     metadb = runtime.storage_runtime().metadb
+    org_id = uuid.uuid4()
     team1_id = metadb.create_team(
+        org_id=org_id,
         name="Test Team1", description="A team for testing", meta={"foo": "bar"}
     )
     team2_id = metadb.create_team(
+        org_id=org_id,
         name="Test Team2", description="Another team for testing", meta={"baz": 123}
     )
     user_id = metadb.create_user(
+        org_id=org_id,
         name="tester",
         email="example@inftyai.com",
         meta={"foo": "bar"},
@@ -161,11 +170,14 @@ def test_query_user():
     runtime.init()
 
     metadb = runtime.storage_runtime().metadb
+    org_id = uuid.uuid4()
     team_id = metadb.create_team(
+        org_id=org_id,
         name="Test Team", description="A team for testing", meta={"foo": "bar"}
     )
 
     user_id = metadb.create_user(
+        org_id=org_id,
         name="tester",
         email="tester@inftyai.com",
         meta={"foo": "bar"},
@@ -207,8 +219,10 @@ def test_query_single_exp():
     team_id = uuid.uuid4()
     user_id = uuid.uuid4()
     metadb = runtime.storage_runtime().metadb
+    org_id = uuid.uuid4()
 
     exp_id = metadb.create_experiment(
+        org_id=org_id,
         name="Test Experiment",
         team_id=team_id,
         user_id=user_id,
@@ -245,12 +259,15 @@ def test_query_experiments():
     team_id = uuid.uuid4()
     user_id = uuid.uuid4()
     metadb = runtime.storage_runtime().metadb
+    org_id = uuid.uuid4()
     _ = metadb.create_experiment(
+        org_id=org_id,
         name="Test Experiment1",
         team_id=team_id,
         user_id=user_id,
     )
     _ = metadb.create_experiment(
+        org_id=org_id,
         name="Test Experiment2",
         team_id=team_id,
         user_id=user_id,
@@ -375,12 +392,15 @@ def test_query_runs():
     user_id = uuid.uuid4()
     exp_id = uuid.uuid4()
     metadb = runtime.storage_runtime().metadb
+    org_id = uuid.uuid4()
     _ = metadb.create_run(
+        org_id=org_id,
         team_id=team_id,
         user_id=user_id,
         experiment_id=exp_id,
     )
     _ = metadb.create_run(
+        org_id=org_id,
         team_id=team_id,
         user_id=user_id,
         experiment_id=exp_id,
@@ -410,8 +430,10 @@ def test_query_experiment_metrics():
     runtime.init()
     team_id = uuid.uuid4()
     metadb = runtime.storage_runtime().metadb
+    org_id = uuid.uuid4()
 
     exp_id = metadb.create_experiment(
+        org_id=org_id,
         name="Test Experiment",
         team_id=team_id,
         user_id=uuid.uuid4(),
@@ -420,6 +442,7 @@ def test_query_experiment_metrics():
     )
 
     _ = metadb.create_metric(
+        org_id=org_id,
         team_id=team_id,
         experiment_id=exp_id,
         run_id=uuid.uuid4(),
@@ -427,6 +450,7 @@ def test_query_experiment_metrics():
         value=0.95,
     )
     _ = metadb.create_metric(
+        org_id=org_id,
         team_id=team_id,
         experiment_id=exp_id,
         run_id=uuid.uuid4(),

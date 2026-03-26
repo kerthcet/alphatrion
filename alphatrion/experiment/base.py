@@ -241,6 +241,7 @@ class Experiment(ABC):
         else:
             self._id = self._runtime._metadb.create_experiment(
                 name=name,
+                org_id=self._runtime._org_id,
                 team_id=self._runtime._team_id,
                 user_id=self._runtime._user_id,
                 description=description,

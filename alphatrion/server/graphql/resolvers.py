@@ -21,6 +21,7 @@ from .types import (
     ArtifactContent,
     ArtifactRepository,
     ArtifactTag,
+    CreateOrganizationInput,
     CreateTeamInput,
     CreateUserInput,
     DailyTokenUsage,
@@ -33,6 +34,7 @@ from .types import (
     Label,
     Metric,
     ModelDistribution,
+    Organization,
     RemoveUserFromTeamInput,
     Run,
     Session,
@@ -40,6 +42,7 @@ from .types import (
     Team,
     TraceEvent,
     TraceLink,
+    UpdateOrganizationInput,
     UpdateUserInput,
     User,
 )
@@ -53,6 +56,7 @@ class GraphQLResolvers:
         return [
             Team(
                 id=t.uuid,
+                org_id=t.org_id,
                 name=t.name,
                 description=t.description,
                 meta=t.meta,
@@ -69,6 +73,7 @@ class GraphQLResolvers:
         if team:
             return Team(
                 id=team.uuid,
+                org_id=team.org_id,
                 name=team.name,
                 description=team.description,
                 meta=team.meta,
@@ -90,6 +95,37 @@ class GraphQLResolvers:
                 meta=user.meta,
                 created_at=user.created_at,
                 updated_at=user.updated_at,
+            )
+        return None
+
+    @staticmethod
+    def list_organizations() -> list[Organization]:
+        metadb = runtime.storage_runtime().metadb
+        orgs = metadb.list_organizations()
+        return [
+            Organization(
+                id=org.uuid,
+                name=org.name,
+                description=org.description,
+                meta=org.meta,
+                created_at=org.created_at,
+                updated_at=org.updated_at,
+            )
+            for org in orgs
+        ]
+
+    @staticmethod
+    def get_organization(id: strawberry.ID) -> Organization | None:
+        metadb = runtime.storage_runtime().metadb
+        org = metadb.get_organization(org_id=uuid.UUID(id))
+        if org:
+            return Organization(
+                id=org.uuid,
+                name=org.name,
+                description=org.description,
+                meta=org.meta,
+                created_at=org.created_at,
+                updated_at=org.updated_at,
             )
         return None
 
@@ -1047,6 +1083,7 @@ class GraphQLMutations:
         metadb = runtime.storage_runtime().metadb
         user_id = metadb.create_user(
             uuid=uuid.UUID(input.id) if input.id else None,
+            org_id=uuid.UUID(input.org_id),
             name=input.name,
             email=input.email,
             avatar_url=input.avatar_url,
@@ -1087,10 +1124,62 @@ class GraphQLMutations:
         )
 
     @staticmethod
+    def create_organization(input: CreateOrganizationInput) -> Organization:
+        metadb = runtime.storage_runtime().metadb
+        org_id = metadb.create_organization(
+            uuid=uuid.UUID(input.id) if input.id else None,
+            name=input.name,
+            description=input.description,
+            meta=input.meta,
+        )
+        org = metadb.get_organization(org_id=org_id)
+        if org:
+            return Organization(
+                id=org.uuid,
+                name=org.name,
+                description=org.description,
+                meta=org.meta,
+                created_at=org.created_at,
+                updated_at=org.updated_at,
+            )
+        msg = f"Failed to create organization with name {input.name}"
+        raise RuntimeError(msg)
+
+    @staticmethod
+    def update_organization(input: UpdateOrganizationInput) -> Organization:
+        metadb = runtime.storage_runtime().metadb
+        org_id = uuid.UUID(input.id)
+
+        org = metadb.update_organization(
+            org_id=org_id,
+            name=input.name,
+            description=input.description,
+            meta=input.meta,
+        )
+        if not org:
+            msg = f"Organization with id {input.id} not found"
+            raise ValueError(msg)
+
+        return Organization(
+            id=org.uuid,
+            name=org.name,
+            description=org.description,
+            meta=org.meta,
+            created_at=org.created_at,
+            updated_at=org.updated_at,
+        )
+
+    @staticmethod
+    def delete_organization(organization_id: strawberry.ID) -> bool:
+        metadb = runtime.storage_runtime().metadb
+        return metadb.delete_organization(org_id=uuid.UUID(organization_id))
+
+    @staticmethod
     def create_team(input: CreateTeamInput) -> Team:
         metadb = runtime.storage_runtime().metadb
         team_id = metadb.create_team(
             uuid=uuid.UUID(input.id) if input.id else None,
+            org_id=uuid.UUID(input.org_id),
             name=input.name,
             description=input.description,
             meta=input.meta,
@@ -1099,6 +1188,7 @@ class GraphQLMutations:
         if team:
             return Team(
                 id=team.uuid,
+                org_id=team.org_id,
                 name=team.name,
                 description=team.description,
                 meta=team.meta,
@@ -1127,7 +1217,9 @@ class GraphQLMutations:
             raise ValueError(msg)
 
         # Add user to team (creates TeamMember entry)
-        return metadb.add_user_to_team(user_id=user_id, team_id=team_id)
+        return metadb.add_user_to_team(
+            user_id=user_id, team_id=team_id
+        )
 
     @staticmethod
     def remove_user_from_team(input: RemoveUserFromTeamInput) -> bool:

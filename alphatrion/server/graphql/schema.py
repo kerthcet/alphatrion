@@ -8,16 +8,19 @@ from alphatrion.server.graphql.types import (
     ArtifactFile,
     ArtifactRepository,
     ArtifactTag,
+    CreateOrganizationInput,
     CreateTeamInput,
     CreateUserInput,
     DailyTokenUsage,
     Dataset,
     Experiment,
+    Organization,
     RemoveUserFromTeamInput,
     Run,
     Session,
     Span,
     Team,
+    UpdateOrganizationInput,
     UpdateUserInput,
     User,
 )
@@ -25,6 +28,13 @@ from alphatrion.server.graphql.types import (
 
 @strawberry.type
 class Query:
+    organizations: list[Organization] = strawberry.field(
+        resolver=GraphQLResolvers.list_organizations
+    )
+    organization: Organization | None = strawberry.field(
+        resolver=GraphQLResolvers.get_organization
+    )
+
     teams: list[Team] = strawberry.field(resolver=GraphQLResolvers.list_teams)
     team: Team | None = strawberry.field(resolver=GraphQLResolvers.get_team)
 
@@ -171,6 +181,18 @@ class Query:
 
 @strawberry.type
 class Mutation:
+    @strawberry.mutation
+    def create_organization(self, input: CreateOrganizationInput) -> Organization:
+        return GraphQLMutations.create_organization(input=input)
+
+    @strawberry.mutation
+    def update_organization(self, input: UpdateOrganizationInput) -> Organization:
+        return GraphQLMutations.update_organization(input=input)
+
+    @strawberry.mutation
+    def delete_organization(self, organization_id: strawberry.ID) -> bool:
+        return GraphQLMutations.delete_organization(organization_id=organization_id)
+
     @strawberry.mutation
     def create_user(self, input: CreateUserInput) -> User:
         return GraphQLMutations.create_user(input=input)

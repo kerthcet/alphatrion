@@ -22,14 +22,19 @@ def unique_email(base: str) -> str:
 def test_create_team_mutation():
     """Test creating a team via GraphQL mutation"""
     runtime.init()
+    metadb = runtime.storage_runtime().metadb
 
-    mutation = """
-    mutation {
-        createTeam(input: {
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
+
+    mutation = f"""
+    mutation {{
+        createTeam(input: {{
+            orgId: "{org_id}"
             name: "Test Team"
             description: "A team created via mutation"
-            meta: {foo: "bar", count: 42}
-        }) {
+            meta: {{foo: "bar", count: 42}}
+        }}) {{
             id
             name
             description
@@ -38,8 +43,8 @@ def test_create_team_mutation():
             updatedAt
             totalExperiments
             totalRuns
-        }
-    }
+        }}
+    }}
     """
     response = schema.execute_sync(
         mutation,
@@ -54,7 +59,6 @@ def test_create_team_mutation():
 
     # Verify team was actually created in database
     team_id = uuid.UUID(response.data["createTeam"]["id"])
-    metadb = runtime.storage_runtime().metadb
     team = metadb.get_team(team_id=team_id)
     assert team is not None
     assert team.name == "Test Team"
@@ -63,12 +67,17 @@ def test_create_team_mutation():
 def test_create_team_mutation_with_uuid():
     """Test creating a team via GraphQL mutation"""
     runtime.init()
+    metadb = runtime.storage_runtime().metadb
     id = uuid.uuid4()  # Generate a UUID to use for the new team
+
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
 
     mutation = f"""
     mutation {{
         createTeam(input: {{
             id: "{str(id)}"
+            orgId: "{org_id}"
             name: "Test Team"
             description: "A team created via mutation"
             meta: {{foo: "bar", count: 42}}
@@ -101,12 +110,16 @@ def test_create_user_mutation():
     runtime.init()
     metadb = runtime.storage_runtime().metadb
 
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
+
     username = unique_username("testuser")
     email = unique_email("testuser")
 
     mutation = f"""
     mutation {{
         createUser(input: {{
+            orgId: "{org_id}"
             name: "{username}"
             email: "{email}"
             meta: {{role: "engineer", level: "senior"}}
@@ -147,7 +160,11 @@ def test_create_user_mutation():
 def test_create_user_mutation_with_uuid():
     """Test creating a user via GraphQL mutation"""
     runtime.init()
+    metadb = runtime.storage_runtime().metadb
     id = uuid.uuid4()  # Generate a UUID to use for the new user
+
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
 
     username = unique_username("testuser")
     email = unique_email("testuser")
@@ -156,6 +173,7 @@ def test_create_user_mutation_with_uuid():
     mutation {{
         createUser(input: {{
             id: "{str(id)}"
+            orgId: "{org_id}"
             name: "{username}"
             email: "{email}"
             meta: {{role: "engineer", level: "senior"}}
@@ -188,11 +206,15 @@ def test_add_user_to_team_mutation():
     runtime.init()
     metadb = runtime.storage_runtime().metadb
 
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
+
     # Create a team
-    team_id = metadb.create_team(name="Test Team", description="First team")
+    team_id = metadb.create_team(org_id=org_id, name="Test Team", description="First team")
 
     # Create a user (without team initially)
     user_id = metadb.create_user(
+        org_id=org_id,
         name=unique_username("testuser"),
         email=unique_email("test"),
     )
@@ -229,12 +251,16 @@ def test_add_user_to_multiple_teams():
     runtime.init()
     metadb = runtime.storage_runtime().metadb
 
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
+
     # Create two teams
-    team1_id = metadb.create_team(name="Team 1")
-    team2_id = metadb.create_team(name="Team 2")
+    team1_id = metadb.create_team(org_id=org_id, name="Team 1")
+    team2_id = metadb.create_team(org_id=org_id, name="Team 2")
 
     # Create a user
     user_id = metadb.create_user(
+        org_id=org_id,
         name=unique_username("multiuser"),
         email=unique_email("multi"),
     )
@@ -278,8 +304,12 @@ def test_add_user_to_team_with_invalid_team():
     runtime.init()
     metadb = runtime.storage_runtime().metadb
 
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
+
     # Create a user
     user_id = metadb.create_user(
+        org_id=org_id,
         name=unique_username("invalidteamuser"),
         email=unique_email("invalidteam"),
     )
@@ -307,8 +337,11 @@ def test_add_user_to_team_with_invalid_user():
     runtime.init()
     metadb = runtime.storage_runtime().metadb
 
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
+
     # Create a team
-    team_id = metadb.create_team(name="Test Team")
+    team_id = metadb.create_team(org_id=org_id, name="Test Team")
 
     # Try to add non-existent user
     fake_user_id = uuid.uuid4()
@@ -331,37 +364,43 @@ def test_add_user_to_team_with_invalid_user():
 def test_user_workflow():
     """Test user workflow: create team, create user, add user to teams"""
     runtime.init()
+    metadb = runtime.storage_runtime().metadb
+
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
 
     username = unique_username("alice")
     email = unique_email("alice")
 
     # Step 1: Create first team
-    mutation1 = """
-    mutation {
-        createTeam(input: {
+    mutation1 = f"""
+    mutation {{
+        createTeam(input: {{
+            orgId: "{org_id}"
             name: "Engineering Team"
             description: "Engineering department"
-        }) {
+        }}) {{
             id
             name
-        }
-    }
+        }}
+    }}
     """
     response1 = schema.execute_sync(mutation1, variable_values={})
     assert response1.errors is None
     team1_id = response1.data["createTeam"]["id"]
 
     # Step 2: Create second team
-    mutation2 = """
-    mutation {
-        createTeam(input: {
+    mutation2 = f"""
+    mutation {{
+        createTeam(input: {{
+            orgId: "{org_id}"
             name: "Data Science Team"
             description: "Data science department"
-        }) {
+        }}) {{
             id
             name
-        }
-    }
+        }}
+    }}
     """
     response2 = schema.execute_sync(mutation2, variable_values={})
     assert response2.errors is None
@@ -371,6 +410,7 @@ def test_user_workflow():
     mutation3 = f"""
     mutation {{
         createUser(input: {{
+            orgId: "{org_id}"
             name: "{username}"
             email: "{email}"
             meta: {{title: "Software Engineer"}}
@@ -437,11 +477,15 @@ def test_remove_user_from_team_mutation():
     runtime.init()
     metadb = runtime.storage_runtime().metadb
 
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
+
     # Create a team
-    team_id = metadb.create_team(name="Test Team")
+    team_id = metadb.create_team(org_id=org_id, name="Test Team")
 
     # Create a user and add to team
     user_id = metadb.create_user(
+        org_id=org_id,
         name=unique_username("removetest"),
         email=unique_email("removetest"),
         team_id=team_id,
@@ -477,9 +521,15 @@ def test_update_user():
     runtime.init()
     metadb = runtime.storage_runtime().metadb
 
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
+
+    # Use unique email for test isolation
+    unique_email = f"tester_{uuid.uuid4().hex[:8]}@example.com"
     user_id = metadb.create_user(
+        org_id=org_id,
         name="tester",
-        email="tester@example.com",
+        email=unique_email,
         meta={"foo": "bar"},
     )
 
@@ -509,15 +559,19 @@ def test_delete_experiment():
     runtime.init()
     metadb = runtime.storage_runtime().metadb
 
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
+
     # Create a team and experiment
-    team_id = metadb.create_team(name="Experiment Team")
+    team_id = metadb.create_team(org_id=org_id, name="Experiment Team")
     user_id = metadb.create_user(
+        org_id=org_id,
         name=unique_username("expuser"),
         email=unique_email("expuser"),
         team_id=team_id,
     )
     experiment_id = metadb.create_experiment(
-        team_id=team_id, user_id=user_id, name="Experiment to Delete"
+        org_id=org_id, team_id=team_id, user_id=user_id, name="Experiment to Delete"
     )
 
     # Verify experiment exists
@@ -548,9 +602,13 @@ def test_delete_experiments_batch():
     runtime.init()
     metadb = runtime.storage_runtime().metadb
 
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
+
     # Create a team and user
-    team_id = metadb.create_team(name="Batch Delete Team")
+    team_id = metadb.create_team(org_id=org_id, name="Batch Delete Team")
     user_id = metadb.create_user(
+        org_id=org_id,
         name=unique_username("batchuser"),
         email=unique_email("batchuser"),
         team_id=team_id,
@@ -558,13 +616,13 @@ def test_delete_experiments_batch():
 
     # Create multiple experiments
     exp_id_1 = metadb.create_experiment(
-        team_id=team_id, user_id=user_id, name="Experiment 1"
+        org_id=org_id, team_id=team_id, user_id=user_id, name="Experiment 1"
     )
     exp_id_2 = metadb.create_experiment(
-        team_id=team_id, user_id=user_id, name="Experiment 2"
+        org_id=org_id, team_id=team_id, user_id=user_id, name="Experiment 2"
     )
     exp_id_3 = metadb.create_experiment(
-        team_id=team_id, user_id=user_id, name="Experiment 3"
+        org_id=org_id, team_id=team_id, user_id=user_id, name="Experiment 3"
     )
 
     # Verify all experiments exist
@@ -596,9 +654,13 @@ def test_delete_experiments_partial():
     runtime.init()
     metadb = runtime.storage_runtime().metadb
 
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
+
     # Create a team and user
-    team_id = metadb.create_team(name="Partial Delete Team")
+    team_id = metadb.create_team(org_id=org_id, name="Partial Delete Team")
     user_id = metadb.create_user(
+        org_id=org_id,
         name=unique_username("partialuser"),
         email=unique_email("partialuser"),
         team_id=team_id,
@@ -606,10 +668,10 @@ def test_delete_experiments_partial():
 
     # Create two experiments
     exp_id_1 = metadb.create_experiment(
-        team_id=team_id, user_id=user_id, name="Valid Experiment 1"
+        org_id=org_id, team_id=team_id, user_id=user_id, name="Valid Experiment 1"
     )
     exp_id_2 = metadb.create_experiment(
-        team_id=team_id, user_id=user_id, name="Valid Experiment 2"
+        org_id=org_id, team_id=team_id, user_id=user_id, name="Valid Experiment 2"
     )
 
     # Create a fake experiment ID
@@ -656,9 +718,13 @@ def test_delete_experiments_already_deleted():
     runtime.init()
     metadb = runtime.storage_runtime().metadb
 
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
+
     # Create a team and user
-    team_id = metadb.create_team(name="Already Deleted Team")
+    team_id = metadb.create_team(org_id=org_id, name="Already Deleted Team")
     user_id = metadb.create_user(
+        org_id=org_id,
         name=unique_username("deluser"),
         email=unique_email("deluser"),
         team_id=team_id,
@@ -666,7 +732,7 @@ def test_delete_experiments_already_deleted():
 
     # Create an experiment
     exp_id = metadb.create_experiment(
-        team_id=team_id, user_id=user_id, name="Experiment to Delete Twice"
+        org_id=org_id, team_id=team_id, user_id=user_id, name="Experiment to Delete Twice"
     )
 
     # Delete it once
@@ -693,23 +759,27 @@ def test_delete_experiment_deletes_runs():
     runtime.init()
     metadb = runtime.storage_runtime().metadb
 
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
+
     # Create a team, user, and experiment
-    team_id = metadb.create_team(name="Run Delete Team")
+    team_id = metadb.create_team(org_id=org_id, name="Run Delete Team")
     user_id = metadb.create_user(
+        org_id=org_id,
         name=unique_username("runuser"),
         email=unique_email("runuser"),
         team_id=team_id,
     )
     experiment_id = metadb.create_experiment(
-        team_id=team_id, user_id=user_id, name="Experiment with Runs"
+        org_id=org_id, team_id=team_id, user_id=user_id, name="Experiment with Runs"
     )
 
     # Create some runs for this experiment
     run_id_1 = metadb.create_run(
-        team_id=team_id, user_id=user_id, experiment_id=experiment_id
+        org_id=org_id, team_id=team_id, user_id=user_id, experiment_id=experiment_id
     )
     run_id_2 = metadb.create_run(
-        team_id=team_id, user_id=user_id, experiment_id=experiment_id
+        org_id=org_id, team_id=team_id, user_id=user_id, experiment_id=experiment_id
     )
 
     # Verify runs exist
@@ -744,9 +814,13 @@ def test_delete_experiments_batch_deletes_runs():
     runtime.init()
     metadb = runtime.storage_runtime().metadb
 
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
+
     # Create a team and user
-    team_id = metadb.create_team(name="Batch Run Delete Team")
+    team_id = metadb.create_team(org_id=org_id, name="Batch Run Delete Team")
     user_id = metadb.create_user(
+        org_id=org_id,
         name=unique_username("batchrunuser"),
         email=unique_email("batchrunuser"),
         team_id=team_id,
@@ -754,23 +828,23 @@ def test_delete_experiments_batch_deletes_runs():
 
     # Create multiple experiments with runs
     exp_id_1 = metadb.create_experiment(
-        team_id=team_id, user_id=user_id, name="Experiment 1 with Runs"
+        org_id=org_id, team_id=team_id, user_id=user_id, name="Experiment 1 with Runs"
     )
     run_1_1 = metadb.create_run(
-        team_id=team_id, user_id=user_id, experiment_id=exp_id_1
+        org_id=org_id, team_id=team_id, user_id=user_id, experiment_id=exp_id_1
     )
     run_1_2 = metadb.create_run(
-        team_id=team_id, user_id=user_id, experiment_id=exp_id_1
+        org_id=org_id, team_id=team_id, user_id=user_id, experiment_id=exp_id_1
     )
 
     exp_id_2 = metadb.create_experiment(
-        team_id=team_id, user_id=user_id, name="Experiment 2 with Runs"
+        org_id=org_id, team_id=team_id, user_id=user_id, name="Experiment 2 with Runs"
     )
     run_2_1 = metadb.create_run(
-        team_id=team_id, user_id=user_id, experiment_id=exp_id_2
+        org_id=org_id, team_id=team_id, user_id=user_id, experiment_id=exp_id_2
     )
     run_2_2 = metadb.create_run(
-        team_id=team_id, user_id=user_id, experiment_id=exp_id_2
+        org_id=org_id, team_id=team_id, user_id=user_id, experiment_id=exp_id_2
     )
 
     # Verify all runs exist
@@ -805,15 +879,19 @@ def test_delete_running_experiment_fails():
     runtime.init()
     metadb = runtime.storage_runtime().metadb
 
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
+
     # Create a team, user, and experiment
-    team_id = metadb.create_team(name="Running Experiment Team")
+    team_id = metadb.create_team(org_id=org_id, name="Running Experiment Team")
     user_id = metadb.create_user(
+        org_id=org_id,
         name=unique_username("runninguser"),
         email=unique_email("runninguser"),
         team_id=team_id,
     )
     experiment_id = metadb.create_experiment(
-        team_id=team_id, user_id=user_id, name="Running Experiment"
+        org_id=org_id, team_id=team_id, user_id=user_id, name="Running Experiment"
     )
 
     # Set experiment status to RUNNING
@@ -847,9 +925,13 @@ def test_delete_experiments_skips_running():
     runtime.init()
     metadb = runtime.storage_runtime().metadb
 
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
+
     # Create a team and user
-    team_id = metadb.create_team(name="Mixed Status Team")
+    team_id = metadb.create_team(org_id=org_id, name="Mixed Status Team")
     user_id = metadb.create_user(
+        org_id=org_id,
         name=unique_username("mixeduser"),
         email=unique_email("mixeduser"),
         team_id=team_id,
@@ -857,29 +939,29 @@ def test_delete_experiments_skips_running():
 
     # Create multiple experiments with different statuses
     exp_id_1 = metadb.create_experiment(
-        team_id=team_id, user_id=user_id, name="Completed Experiment"
+        org_id=org_id, team_id=team_id, user_id=user_id, name="Completed Experiment"
     )
     metadb.update_experiment(experiment_id=exp_id_1, status=Status.COMPLETED)
 
     exp_id_2 = metadb.create_experiment(
-        team_id=team_id, user_id=user_id, name="Running Experiment"
+        org_id=org_id, team_id=team_id, user_id=user_id, name="Running Experiment"
     )
     metadb.update_experiment(experiment_id=exp_id_2, status=Status.RUNNING)
 
     exp_id_3 = metadb.create_experiment(
-        team_id=team_id, user_id=user_id, name="Failed Experiment"
+        org_id=org_id, team_id=team_id, user_id=user_id, name="Failed Experiment"
     )
     metadb.update_experiment(experiment_id=exp_id_3, status=Status.FAILED)
 
     # Create runs for all experiments
     run_id_1 = metadb.create_run(
-        team_id=team_id, user_id=user_id, experiment_id=exp_id_1
+        org_id=org_id, team_id=team_id, user_id=user_id, experiment_id=exp_id_1
     )
     run_id_2 = metadb.create_run(
-        team_id=team_id, user_id=user_id, experiment_id=exp_id_2
+        org_id=org_id, team_id=team_id, user_id=user_id, experiment_id=exp_id_2
     )
     run_id_3 = metadb.create_run(
-        team_id=team_id, user_id=user_id, experiment_id=exp_id_3
+        org_id=org_id, team_id=team_id, user_id=user_id, experiment_id=exp_id_3
     )
 
     # Verify all experiments exist
@@ -921,9 +1003,13 @@ def test_delete_experiments_all_running():
     runtime.init()
     metadb = runtime.storage_runtime().metadb
 
+    # Create organization first
+    org_id = metadb.create_organization(name="Test Org")
+
     # Create a team and user
-    team_id = metadb.create_team(name="All Running Team")
+    team_id = metadb.create_team(org_id=org_id, name="All Running Team")
     user_id = metadb.create_user(
+        org_id=org_id,
         name=unique_username("allrunninguser"),
         email=unique_email("allrunninguser"),
         team_id=team_id,
@@ -931,12 +1017,12 @@ def test_delete_experiments_all_running():
 
     # Create multiple running experiments
     exp_id_1 = metadb.create_experiment(
-        team_id=team_id, user_id=user_id, name="Running Experiment 1"
+        org_id=org_id, team_id=team_id, user_id=user_id, name="Running Experiment 1"
     )
     metadb.update_experiment(experiment_id=exp_id_1, status=Status.RUNNING)
 
     exp_id_2 = metadb.create_experiment(
-        team_id=team_id, user_id=user_id, name="Running Experiment 2"
+        org_id=org_id, team_id=team_id, user_id=user_id, name="Running Experiment 2"
     )
     metadb.update_experiment(experiment_id=exp_id_2, status=Status.RUNNING)
 

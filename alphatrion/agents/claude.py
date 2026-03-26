@@ -245,6 +245,8 @@ def handle_stop():
         if not user_id and session:
             user_id = str(session.user_id)
 
+        user = metadb.get_user(user_id=uuid.UUID(user_id))
+
         if not team_id and session:
             team_id = str(session.team_id)
 
@@ -286,6 +288,7 @@ def handle_stop():
                 agent_id = metadb.create_agent(
                     name="claude",
                     type=AgentType.CLAUDE,
+                    org_id=user.org_id,
                     team_id=uuid.UUID(team_id),
                     user_id=uuid.UUID(user_id),
                 )

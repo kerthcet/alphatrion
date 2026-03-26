@@ -35,8 +35,19 @@ class TraceStats:
 
 
 @strawberry.type
+class Organization:
+    id: strawberry.ID
+    name: str
+    description: str | None
+    meta: JSON | None
+    created_at: datetime
+    updated_at: datetime
+
+
+@strawberry.type
 class Team:
     id: strawberry.ID
+    org_id: strawberry.ID
     name: str | None
     description: str | None
     meta: JSON | None
@@ -340,8 +351,25 @@ class Dataset:
 
 # Input types for mutations
 @strawberry.input
+class CreateOrganizationInput:
+    id: strawberry.ID | None = None
+    name: str
+    description: str | None = None
+    meta: JSON | None = None
+
+
+@strawberry.input
+class UpdateOrganizationInput:
+    id: strawberry.ID
+    name: str | None = None
+    description: str | None = None
+    meta: JSON | None = None
+
+
+@strawberry.input
 class CreateUserInput:
     id: strawberry.ID | None = None
+    org_id: strawberry.ID
     name: str
     email: str
     avatar_url: str | None = None
@@ -351,6 +379,7 @@ class CreateUserInput:
 @strawberry.input
 class CreateTeamInput:
     id: strawberry.ID | None = None
+    org_id: strawberry.ID
     name: str
     description: str | None = None
     meta: JSON | None = None

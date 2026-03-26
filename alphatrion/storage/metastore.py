@@ -9,7 +9,7 @@ class MetaStore(ABC):
 
     @abstractmethod
     def create_team(
-        self, name: str, description: str | None = None, meta: dict | None = None
+        self, name: str, org_id: uuid.UUID, description: str | None = None, meta: dict | None = None
     ) -> uuid.UUID:
         raise NotImplementedError("Subclasses must implement this method.")
 
@@ -22,6 +22,7 @@ class MetaStore(ABC):
         self,
         name: str,
         email: str,
+        org_id: uuid.UUID,
         avatar_url: str | None = None,
         team_id: uuid.UUID | None = None,
         meta: dict | None = None,
@@ -68,6 +69,7 @@ class MetaStore(ABC):
     @abstractmethod
     def create_experiment(
         self,
+        org_id: uuid.UUID,
         team_id: uuid.UUID,
         user_id: uuid.UUID,
         name: str,
@@ -94,6 +96,7 @@ class MetaStore(ABC):
     @abstractmethod
     def create_run(
         self,
+        org_id: uuid.UUID,
         team_id: uuid.UUID,
         user_id: uuid.UUID,
         experiment_id: uuid.UUID,
@@ -104,6 +107,7 @@ class MetaStore(ABC):
     @abstractmethod
     def create_metric(
         self,
+        org_id: uuid.UUID,
         team_id: uuid.UUID,
         experiment_id: uuid.UUID,
         run_id: uuid.UUID,

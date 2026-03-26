@@ -116,8 +116,7 @@ async def test_snapshot_path():
 
 @pytest.mark.asyncio
 async def test_experiment_with_done():
-    init(
-        team_id=uuid.uuid4(),
+    init(team_id=uuid.uuid4(),
         user_id=uuid.uuid4(),
     )
 
@@ -133,8 +132,7 @@ async def test_experiment_with_done():
 
 @pytest.mark.asyncio
 async def test_experiment_with_done_with_err():
-    init(
-        team_id=uuid.uuid4(),
+    init(team_id=uuid.uuid4(),
         user_id=uuid.uuid4(),
     )
 
@@ -157,8 +155,7 @@ async def test_experiment_with_done_with_err():
 
 @pytest.mark.asyncio
 async def test_experiment_with_resume():
-    init(
-        team_id=uuid.uuid4(),
+    init(team_id=uuid.uuid4(),
         user_id=uuid.uuid4(),
     )
 
@@ -191,8 +188,7 @@ async def test_experiment_with_resume():
 
 @pytest.mark.asyncio
 async def test_experiment_with_wait():
-    init(
-        team_id=uuid.uuid4(),
+    init(team_id=uuid.uuid4(),
         user_id=uuid.uuid4(),
     )
 
@@ -218,8 +214,7 @@ async def test_experiment_with_wait():
 async def test_create_experiment_with_run():
     team_id = uuid.uuid4()
     user_id = uuid.uuid4()
-    init(
-        team_id=team_id,
+    init(team_id=team_id,
         user_id=user_id,
     )
 
@@ -251,8 +246,7 @@ async def test_create_experiment_with_run():
 
 @pytest.mark.asyncio
 async def test_create_experiment_with_run_cancelled():
-    init(
-        team_id=uuid.uuid4(),
+    init(team_id=uuid.uuid4(),
         user_id=uuid.uuid4(),
     )
 
@@ -288,8 +282,7 @@ async def test_create_experiment_with_run_cancelled():
 
 @pytest.mark.asyncio
 async def test_create_experiment_with_max_execution_seconds():
-    init(
-        team_id=uuid.uuid4(),
+    init(team_id=uuid.uuid4(),
         user_id=uuid.uuid4(),
     )
 
@@ -306,8 +299,7 @@ async def test_create_experiment_with_max_execution_seconds():
 
 @pytest.mark.asyncio
 async def test_experiment_with_signal():
-    init(
-        team_id=uuid.uuid4(),
+    init(team_id=uuid.uuid4(),
         user_id=uuid.uuid4(),
     )
 
@@ -331,8 +323,7 @@ async def test_experiment_with_signal():
 
 @pytest.mark.asyncio
 async def test_experiment_with_result_return():
-    init(
-        team_id=uuid.uuid4(),
+    init(team_id=uuid.uuid4(),
         user_id=uuid.uuid4(),
     )
 
@@ -351,8 +342,7 @@ async def test_experiment_with_result_return():
 async def test_experiment_with_labels():
     team_id = uuid.uuid4()
     user_id = uuid.uuid4()
-    init(
-        team_id=team_id,
+    init(team_id=team_id,
         user_id=user_id,
     )
 
@@ -376,8 +366,7 @@ async def test_experiment_with_labels():
 async def test_experiment_with_tags():
     team_id = uuid.uuid4()
     user_id = uuid.uuid4()
-    init(
-        team_id=team_id,
+    init(team_id=team_id,
         user_id=user_id,
     )
 
