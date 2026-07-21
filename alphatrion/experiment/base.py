@@ -190,7 +190,6 @@ class Experiment(ABC):
         # if join() is called, the experiment will auto stop when the runs
         # are all finished.
         self._joining = False
-        self._end_status = None
         self._stopped = asyncio.Event()
         self._received_signal: int | None = None
         self._signal_task: asyncio.Task | None = None
@@ -390,6 +389,8 @@ class Experiment(ABC):
     # wait for them to complete.
     async def join(self):
         self._joining = True
+        if len(self._runs) == 0:
+            self.done()
         await self._context.wait()
 
     # wait blocks until the experiment is terminated, either by timeout or by

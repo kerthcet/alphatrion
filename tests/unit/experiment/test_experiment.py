@@ -253,6 +253,29 @@ async def test_experiment_with_join():
 
 
 @pytest.mark.asyncio
+async def test_experiment_join_with_no_runs():
+    """join() must auto-complete immediately when there are no active runs.
+    Without any runs, no _post_run callback fires, so join() would block
+    forever if it did not complete on its own."""
+    init(
+        team_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        org_id=uuid.uuid4(),
+    )
+
+    exp_id = None
+    async with CraftExperiment.start(name="first-experiment") as exp:
+        exp_id = current_exp_id.get()
+
+        # No runs launched; join() must return promptly instead of hanging.
+        await asyncio.wait_for(exp.join(), timeout=3)
+        assert exp.is_done()
+
+    exp_obj = exp._runtime.metadb.get_experiment(experiment_id=exp_id)
+    assert exp_obj.status == Status.COMPLETED
+
+
+@pytest.mark.asyncio
 async def test_experiment_with_wait():
     """wait() must NOT auto-complete when all runs finish; it blocks until the
     experiment is terminated externally (here, by the timeout)."""
