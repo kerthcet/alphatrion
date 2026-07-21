@@ -168,6 +168,9 @@ class Experiment(ABC):
         "_total_runs_counter",
         # The end status, None, Err or Cancelled.
         "_end_status",
+        # True once join() is called; the experiment auto-completes when all
+        # runs are finished.
+        "_joining",
         "_stopped",
         "_received_signal",
         "_signal_task",
@@ -184,9 +187,9 @@ class Experiment(ABC):
         self._early_stopping_counter = 0
         self._total_runs_counter = 0
         self._end_status = None
-        # if experiment starts to wait, it will auto stop when the runs
+        # if join() is called, the experiment will auto stop when the runs
         # are all finished.
-        self._start_waiting = False
+        self._joining = False
         self._end_status = None
         self._stopped = asyncio.Event()
         self._received_signal: int | None = None
@@ -382,12 +385,19 @@ class Experiment(ABC):
 
         return timeout
 
-    # Make sure you have termination condition, either by timeout or by calling cancel()
-    # Before we have logic like once all the tasks are done, we'll call the cancel()
-    # automatically, however, this is unpredictable because some tasks may wait for
-    # external events, so we leave it to the user to decide when to stop the experiment.
+    # join blocks until all the runs are finished, then the experiment is
+    # auto stopped. Use this when you have launched all the runs and want to
+    # wait for them to complete.
+    async def join(self):
+        self._joining = True
+        await self._context.wait()
+
+    # wait blocks until the experiment is terminated, either by timeout or by
+    # calling done()/cancel() (e.g. from a signal handler). Unlike join(), it
+    # does NOT auto stop when all runs are finished, so the experiment keeps
+    # running even with no active runs. Use this for long-running experiments
+    # where the termination condition is external.
     async def wait(self):
-        self._start_waiting = True
         await self._context.wait()
 
     def is_done(self) -> bool:
@@ -488,9 +498,9 @@ class Experiment(ABC):
         ):
             self.done()
 
-        # If the experiment starts to wait and all runs are finished,
+        # If the experiment is joining and all runs are finished,
         # we can stop the experiment.
-        if self._start_waiting and len(self._runs) == 0:
+        if self._joining and len(self._runs) == 0:
             self.done()
 
     @classmethod

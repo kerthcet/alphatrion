@@ -47,7 +47,7 @@ async def test_run_hook_sync_metadata(test_org_id, test_user_id, test_team_id):
     async with CraftExperiment.start("test_hook_experiment") as exp:
         # Create run with sync_metadata hook
         run = exp.run(train_model, post_run_hooks=[PostRunHookFn.sync_metadata])
-        await exp.wait()
+        await exp.join()
 
         # Verify run completed
         assert run.result is not None
@@ -77,7 +77,7 @@ async def test_run_hook_with_non_dict_result(test_org_id, test_user_id, test_tea
         run = exp.run(
             task_with_string_result, post_run_hooks=[PostRunHookFn.sync_metadata]
         )
-        await exp.wait()
+        await exp.join()
 
         # Verify metadata was not updated
         metadb = global_runtime().metadb
@@ -103,7 +103,7 @@ async def test_run_hook_with_dict_without_metadata_key(
         run = exp.run(
             task_without_metadata_key, post_run_hooks=[PostRunHookFn.sync_metadata]
         )
-        await exp.wait()
+        await exp.join()
 
         # Verify metadata was not updated
         metadb = global_runtime().metadb
@@ -132,7 +132,7 @@ async def test_experiment_level_hooks(test_org_id, test_user_id, test_team_id):
     async with CraftExperiment.start("test_exp_hooks", config=config) as exp:
         run1 = exp.run(task1)
         run2 = exp.run(task2)
-        await exp.wait()
+        await exp.join()
 
         # Verify both runs have metadata synced
         metadb = global_runtime().metadb
@@ -174,7 +174,7 @@ async def test_custom_hook(test_org_id, test_user_id, test_team_id):
         run = exp.run(
             train_model, post_run_hooks=[PostRunHookFn.sync_metadata, add_custom_info]
         )
-        await exp.wait()
+        await exp.join()
 
         # Verify both hooks ran
         metadb = global_runtime().metadb
@@ -209,7 +209,7 @@ async def test_hook_merges_with_existing_metadata(
             run_id=run.id, meta={"experiment_version": "v2", "notes": "test run"}
         )
 
-        await exp.wait()
+        await exp.join()
 
         # Verify metadata was merged, not replaced
         run_obj = metadb.get_run(run_id=run.id)
@@ -240,7 +240,7 @@ async def test_hook_failure_does_not_crash_run(test_org_id, test_user_id, test_t
         run = exp.run(
             train_model, post_run_hooks=[buggy_hook, PostRunHookFn.sync_metadata]
         )
-        await exp.wait()
+        await exp.join()
 
         # Run should still complete successfully
         assert run.result is not None
@@ -269,7 +269,7 @@ async def test_both_hooks_together(test_org_id, test_user_id, test_team_id):
             train_model,
             post_run_hooks=[PostRunHookFn.sync_metadata, PostRunHookFn.sync_status],
         )
-        await exp.wait()
+        await exp.join()
 
         # Verify both hooks ran
         metadb = global_runtime().metadb
@@ -297,7 +297,7 @@ async def test_sync_metadata_with_none(test_org_id, test_user_id, test_team_id):
             task_with_none_result,
             post_run_hooks=[PostRunHookFn.sync_metadata, PostRunHookFn.sync_status],
         )
-        await exp.wait()
+        await exp.join()
 
         # Verify metadata was not updated
         metadb = global_runtime().metadb

@@ -94,7 +94,7 @@ async def my_task():
 
 async with CraftExperiment.start(name="my_experiment") as exp:
     run = exp.run(my_task)
-    await exp.wait()
+    await exp.join()
 ```
 
 ### 4. Launch Dashboard
@@ -146,7 +146,7 @@ async with CraftExperiment.start("training") as exp:
         train_model,
         post_run_hooks=[PostRunHookFn.sync_metadata, PostRunHookFn.sync_status]
     )
-    await exp.wait()
+    await exp.join()
 ```
 
 ### 7. Cleanup
