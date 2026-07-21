@@ -29,7 +29,7 @@ async def test_craft_experiment():
         exp.run(lambda: fake_work(5))
         exp.run(lambda: fake_work(6))
 
-        await exp.join()
+        await exp.wait()
 
     runtime = global_runtime()
 

@@ -504,7 +504,7 @@ async def test_log_metrics_with_early_stopping():
         exp.run(lambda: fake_work(0.1))
         exp.run(lambda: fake_work(0.2))
         # trigger early stopping
-        await exp.join()
+        await exp.wait()
 
         assert (
             len(
@@ -542,7 +542,7 @@ async def test_log_metrics_with_early_stopping_never_triggered():
         exp.run(lambda: fake_work(1))
         exp.run(lambda: fake_sleep(5))
         # running in parallel.
-        await exp.join()
+        await exp.wait()
 
         assert (
             len(exp._runtime.metadb.list_metrics_by_experiment_id(experiment_id=exp.id))
@@ -607,7 +607,7 @@ async def test_log_metrics_with_max_target_meet():
         exp.run(lambda: fake_work(0.3))
         exp.run(lambda: fake_sleep(0.4))
         exp.run(lambda: fake_work(0.9))
-        await exp.join()
+        await exp.wait()
 
         assert (
             len(
@@ -644,7 +644,7 @@ async def test_log_metrics_with_min_target_meet():
         exp.run(lambda: fake_work(0.3))
         exp.run(lambda: fake_sleep(0.4))
         exp.run(lambda: fake_work(0.2))
-        await exp.join()
+        await exp.wait()
 
         assert (
             len(

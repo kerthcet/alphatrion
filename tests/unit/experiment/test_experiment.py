@@ -245,7 +245,7 @@ async def test_experiment_with_join():
         exp.run(fake_work)
         assert datetime.now() - start_time <= timedelta(seconds=1)
 
-        await exp.join()
+        await exp.wait()
         assert datetime.now() - start_time >= timedelta(seconds=3)
 
     exp_obj = exp._runtime.metadb.get_experiment(experiment_id=exp_id)
@@ -268,7 +268,7 @@ async def test_experiment_join_with_no_runs():
         exp_id = current_exp_id.get()
 
         # No runs launched; join() must return promptly instead of hanging.
-        await asyncio.wait_for(exp.join(), timeout=3)
+        await asyncio.wait_for(exp.wait(), timeout=3)
         assert exp.is_done()
 
     exp_obj = exp._runtime.metadb.get_experiment(experiment_id=exp_id)
@@ -276,8 +276,8 @@ async def test_experiment_join_with_no_runs():
 
 
 @pytest.mark.asyncio
-async def test_experiment_with_wait():
-    """wait() must NOT auto-complete when all runs finish; it blocks until the
+async def test_experiment_with_wait_until_done():
+    """wait_until_done() must NOT auto-complete when all runs finish; it blocks until the
     experiment is terminated externally (here, by the timeout)."""
     init(
         team_id=uuid.uuid4(),
@@ -298,9 +298,10 @@ async def test_experiment_with_wait():
 
         exp.run(fake_work)
 
-        await exp.wait()
-        # The run finishes after ~1s, but wait() keeps blocking until the
-        # timeout at ~3s instead of auto-completing when the run drains.
+        await exp.wait_until_done()
+        # The run finishes after ~1s, but wait_until_done() keeps blocking
+        # until the timeout at ~3s instead of auto-completing when the run
+        # drains.
         assert datetime.now() - start_time >= timedelta(seconds=3)
         assert len(exp._runs) == 0
 
@@ -331,7 +332,7 @@ async def test_create_experiment_with_run():
         run2 = exp.run(lambda: fake_work(exp.id))
         assert len(exp._runs) == 2
 
-        await exp.join()
+        await exp.wait()
         assert datetime.now() - start_time >= timedelta(seconds=3)
         assert len(exp._runs) == 0
 
@@ -365,7 +366,7 @@ async def test_create_experiment_with_run_cancelled():
         run_3 = exp.run(lambda: fake_work(6))
         # At this point, 4 runs are started.
         assert len(exp._runs) == 4
-        await exp.join()
+        await exp.wait()
         assert len(exp._runs) == 0
 
         run_0_obj = run_0._get_obj()
@@ -394,7 +395,10 @@ async def test_create_experiment_with_max_execution_seconds():
         name="first-experiment",
         config=experiment.ExperimentConfig(max_execution_seconds=2),
     ) as exp:
-        await exp.join()
+        # No runs launched; the experiment must terminate on the timeout, so
+        # use wait_until_done() rather than wait() (which would auto-complete
+        # immediately with zero active runs).
+        await exp.wait_until_done()
         assert exp.is_done()
 
         exp_obj = exp._get_obj()
@@ -420,7 +424,7 @@ async def test_experiment_with_signal():
     ) as exp:
         exp.run(lambda: asyncio.sleep(5))
         exp.run(partial(fake_work, exp))
-        await exp.join()
+        await exp.wait()
 
     exp_obj = exp._get_obj()
     assert exp_obj.status == Status.INTERRUPTED
@@ -447,7 +451,7 @@ async def test_experiment_with_sigint_cancelled():
     ) as exp:
         exp.run(lambda: asyncio.sleep(5))
         exp.run(partial(fake_work, exp))
-        await exp.join()
+        await exp.wait()
 
     exp_obj = exp._get_obj()
     assert exp_obj.status == Status.CANCELLED

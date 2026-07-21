@@ -340,7 +340,7 @@ async def test_query_single_run(
         run = exp.run(create_joke)
         run_id = run.id
         exp_id = exp.id
-        await exp.join()
+        await exp.wait()
 
     query = f"""
     query {{
@@ -510,7 +510,7 @@ async def test_query_experiment_with_usage(
         exp.run(create_joke)
 
         exp._on_signal(signal.SIGTERM)  # Simulate sending a signal to trigger resume
-        await exp.join()
+        await exp.wait()
 
     query = f"""
     query {{
