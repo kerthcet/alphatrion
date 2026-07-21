@@ -227,7 +227,7 @@ async def test_experiment_with_resume():
 
 
 @pytest.mark.asyncio
-async def test_experiment_with_wait():
+async def test_experiment_with_join():
     init(
         team_id=uuid.uuid4(),
         user_id=uuid.uuid4(),
@@ -247,6 +247,63 @@ async def test_experiment_with_wait():
 
         await exp.wait()
         assert datetime.now() - start_time >= timedelta(seconds=3)
+
+    exp_obj = exp._runtime.metadb.get_experiment(experiment_id=exp_id)
+    assert exp_obj.status == Status.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_experiment_join_with_no_runs():
+    """join() must auto-complete immediately when there are no active runs.
+    Without any runs, no _post_run callback fires, so join() would block
+    forever if it did not complete on its own."""
+    init(
+        team_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        org_id=uuid.uuid4(),
+    )
+
+    exp_id = None
+    async with CraftExperiment.start(name="first-experiment") as exp:
+        exp_id = current_exp_id.get()
+
+        # No runs launched; join() must return promptly instead of hanging.
+        await asyncio.wait_for(exp.wait(), timeout=3)
+        assert exp.is_done()
+
+    exp_obj = exp._runtime.metadb.get_experiment(experiment_id=exp_id)
+    assert exp_obj.status == Status.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_experiment_with_wait_until_done():
+    """wait_until_done() must NOT auto-complete when all runs finish; it blocks until the
+    experiment is terminated externally (here, by the timeout)."""
+    init(
+        team_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        org_id=uuid.uuid4(),
+    )
+
+    async def fake_work():
+        await asyncio.sleep(1)
+
+    exp_id = None
+    async with CraftExperiment.start(
+        name="first-experiment",
+        config=experiment.ExperimentConfig(max_execution_seconds=3),
+    ) as exp:
+        exp_id = current_exp_id.get()
+        start_time = datetime.now()
+
+        exp.run(fake_work)
+
+        await exp.wait_until_done()
+        # The run finishes after ~1s, but wait_until_done() keeps blocking
+        # until the timeout at ~3s instead of auto-completing when the run
+        # drains.
+        assert datetime.now() - start_time >= timedelta(seconds=3)
+        assert len(exp._runs) == 0
 
     exp_obj = exp._runtime.metadb.get_experiment(experiment_id=exp_id)
     assert exp_obj.status == Status.COMPLETED
@@ -338,7 +395,10 @@ async def test_create_experiment_with_max_execution_seconds():
         name="first-experiment",
         config=experiment.ExperimentConfig(max_execution_seconds=2),
     ) as exp:
-        await exp.wait()
+        # No runs launched; the experiment must terminate on the timeout, so
+        # use wait_until_done() rather than wait() (which would auto-complete
+        # immediately with zero active runs).
+        await exp.wait_until_done()
         assert exp.is_done()
 
         exp_obj = exp._get_obj()
