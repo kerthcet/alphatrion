@@ -168,7 +168,7 @@ class Experiment(ABC):
         "_total_runs_counter",
         # The end status, None, Err or Cancelled.
         "_end_status",
-        # True once wait_until_done() is called; the experiment auto-completes when all
+        # True once wait() is called; the experiment auto-completes when all
         # runs are finished.
         "_waiting",
         "_stopped",
@@ -187,7 +187,7 @@ class Experiment(ABC):
         self._early_stopping_counter = 0
         self._total_runs_counter = 0
         self._end_status = None
-        # if wait_until_done() is called, the experiment will auto stop when the runs
+        # if wait() is called, the experiment will auto stop when the runs
         # are all finished.
         self._waiting = False
         self._stopped = asyncio.Event()
