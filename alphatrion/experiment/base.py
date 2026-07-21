@@ -168,9 +168,9 @@ class Experiment(ABC):
         "_total_runs_counter",
         # The end status, None, Err or Cancelled.
         "_end_status",
-        # True once wait() is called; the experiment auto-completes when all
+        # True once wait_until_done() is called; the experiment auto-completes when all
         # runs are finished.
-        "_joining",
+        "_waiting",
         "_stopped",
         "_received_signal",
         "_signal_task",
@@ -187,9 +187,9 @@ class Experiment(ABC):
         self._early_stopping_counter = 0
         self._total_runs_counter = 0
         self._end_status = None
-        # if wait() is called, the experiment will auto stop when the runs
+        # if wait_until_done() is called, the experiment will auto stop when the runs
         # are all finished.
-        self._joining = False
+        self._waiting = False
         self._stopped = asyncio.Event()
         self._received_signal: int | None = None
         self._signal_task: asyncio.Task | None = None
@@ -388,7 +388,7 @@ class Experiment(ABC):
     # auto stopped. Use this when you have launched all the runs and want to
     # wait for them to complete.
     async def wait(self):
-        self._joining = True
+        self._waiting = True
         if len(self._runs) == 0:
             self.done()
         await self._context.wait()
@@ -501,7 +501,7 @@ class Experiment(ABC):
 
         # If the experiment is waiting and all runs are finished,
         # we can stop the experiment.
-        if self._joining and len(self._runs) == 0:
+        if self._waiting and len(self._runs) == 0:
             self.done()
 
     @classmethod
