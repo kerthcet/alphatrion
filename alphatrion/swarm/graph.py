@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from alphatrion.swarm.formats import check_value, compatible, describe, unify
 from alphatrion.swarm.nodes import Node, NodeResult
 from alphatrion.swarm.state import State
 
@@ -12,12 +13,15 @@ from alphatrion.swarm.state import State
 # or a branch of a parallel node, so neither affects the other branches.
 END = "end"
 RAISE = "raise"
-# Exits of a loop body: continue starts the next iteration, break ends the loop.
+# Exits of a loop body: continue discards the iteration and starts the next
+# one, and break ends the loop.
 CONTINUE = "continue"
 BREAK = "break"
-# The natural end of a parallel branch body, internal to the engine.
+# Internal exits: the natural end of a loop body, which carries its value
+# into the next iteration, and of a parallel branch body.
+NEXT = "__next__"
 DONE = "__done__"
-RESERVED = {END, RAISE, CONTINUE, BREAK, DONE}
+RESERVED = {END, RAISE, CONTINUE, BREAK, NEXT, DONE}
 
 
 class Edge(BaseModel):
@@ -42,6 +46,8 @@ class GraphResult(BaseModel):
     path: list[str]
     # The exit reached when completed: END, or one of the graph's exits.
     exit: str | None = None
+    # The value the graph ended with, the output of its last node.
+    output: Any = None
     error: str | None = None
 
 
@@ -58,6 +64,11 @@ class Graph:
     Cycles are rejected: repetition is a LoopNode, bounded by its own
     max_iters, so a graph always ends unless one of its nodes runs forever.
 
+    A value flows along the edges: each node receives the output of the node
+    before it, and the entry node the value the graph runs with. Every edge
+    is checked when the graph is validated: the output format of its source
+    must match the input format of its target.
+
     Each execution is recorded in the state memory.
     """
 
@@ -65,18 +76,25 @@ class Graph:
         self,
         name: str = "graph",
         exits: set[str] | None = None,
+        scope: str | None = None,
     ):
         """
         :param exits: targets, besides END, that end the graph, e.g. CONTINUE
             and BREAK in a loop body. The reached one is GraphResult.exit.
+        :param scope: qualifies the node names recorded in memory, e.g. the
+            nodes of a subgraph named experiment as experiment.<name>.
         """
         self.name = name
+        self.scope = scope
         self.exits = {END, RAISE, *(exits or ())}
         self.entry: str | None = None
         self._nodes: dict[str, Node] = {}
         self._edges: dict[str, list[Edge]] = {}
         # Validation is cached, since loop bodies run once per iteration.
         self._validated = False
+        # The formats the graph takes and ends with, set by validate().
+        self.input_type: Any = Any
+        self.exit_types: dict[str, list[Any]] = {}
 
     @property
     def nodes(self) -> dict[str, Node]:
@@ -139,7 +157,50 @@ class Graph:
                 f"Graph {self.name} has a cycle {' -> '.join(cycle)}, "
                 "use a LoopNode to repeat nodes"
             )
+        self._check_formats()
         self._validated = True
+
+    def _check_formats(self) -> None:
+        """Check every edge: its source's output format must match its
+        target's input format. Each node's output format can depend on the
+        one flowing into it, e.g. a decision outputs what it receives."""
+        incoming: dict[str, list[Any]] = {name: [] for name in self._nodes}
+        entry = self._nodes[self.entry]
+        self.input_type = entry.input_type()
+        incoming[self.entry].append(self.input_type)
+        self.exit_types = {}
+        for name in self._topological_order():
+            node = self._nodes[name]
+            received = unify(incoming[name])
+            for edge in self._edges[name]:
+                output = node.output_type(edge.when, received)
+                if edge.target in self.exits:
+                    self.exit_types.setdefault(edge.target, []).append(output)
+                    continue
+                target = self._nodes[edge.target]
+                if not compatible(output, target.input_type()):
+                    raise ValueError(
+                        f"Node {name} outputs {describe(output)}, but "
+                        f"{edge.target} takes {describe(target.input_type())}"
+                    )
+                incoming[edge.target].append(output)
+
+    def _topological_order(self) -> list[str]:
+        indegree = {name: 0 for name in self._nodes}
+        for edge in self.edges:
+            if edge.target in indegree:
+                indegree[edge.target] += 1
+        ready = [name for name, degree in indegree.items() if degree == 0]
+        order = []
+        while ready:
+            name = ready.pop(0)
+            order.append(name)
+            for edge in self._edges[name]:
+                if edge.target in indegree:
+                    indegree[edge.target] -= 1
+                    if indegree[edge.target] == 0:
+                        ready.append(edge.target)
+        return order
 
     def _find_cycle(self) -> list[str] | None:
         """Return the nodes of a cycle, or None if the graph is acyclic."""
@@ -184,10 +245,12 @@ class Graph:
         self,
         state: State | None = None,
         inputs: dict[str, Any] | None = None,
+        value: Any = None,
     ) -> GraphResult:
         """
-        Run the graph. Pass a state to continue from an existing memory
-        and tree, e.g. one loaded from a previous run.
+        Run the graph on value, which the entry node receives. Pass a state
+        to continue from an existing memory and tree, e.g. one loaded from
+        a previous run.
         """
         self.validate()
         if state is None:
@@ -199,17 +262,31 @@ class Graph:
         current = self.entry
         while True:
             node = self._nodes[current]
-            state.node = node.name
+            state.node = self._qualified(node)
             path.append(node.name)
 
             try:
-                result = await node.run(state)
+                result = await node.run(state, value)
+                # A decision returns the value it received, Any here, which
+                # was checked when it was produced.
+                try:
+                    result.output = check_value(
+                        result.output, node.output_type(result.route)
+                    )
+                except TypeError as e:
+                    raise TypeError(
+                        f"Node {node.name} returned the wrong format, {e}"
+                    ) from None
                 current = self.next(node.name, result)
             except Exception as e:
                 error = f"{type(e).__name__}: {e}"
                 self._record(state, node, {"error": error})
                 return GraphResult(
-                    status=GraphStatus.FAILED, state=state, path=path, error=error
+                    status=GraphStatus.FAILED,
+                    state=state,
+                    path=path,
+                    output=value,
+                    error=error,
                 )
             finally:
                 state.node = None
@@ -220,29 +297,41 @@ class Graph:
                 {
                     "route": result.route,
                     "output": result.output,
+                    "details": result.details,
                     "artifact_id": state.current_id,
                 },
             )
+            value = result.output
             state.step += 1
             # Yield to the event loop, so parallel branches interleave even
             # when their nodes are sync functions.
             await asyncio.sleep(0)
             if current == RAISE:
                 error = f"{node.name} raised on route {result.route!r}"
-                if result.output not in (None, [], ""):
-                    error += f": {result.output}"
+                if result.details not in (None, [], ""):
+                    error += f": {result.details}"
                 return GraphResult(
-                    status=GraphStatus.FAILED, state=state, path=path, error=error
+                    status=GraphStatus.FAILED,
+                    state=state,
+                    path=path,
+                    output=value,
+                    error=error,
                 )
             if result.exit == END:
                 current = END
             if current in self.exits:
                 return GraphResult(
-                    status=GraphStatus.COMPLETED, state=state, path=path, exit=current
+                    status=GraphStatus.COMPLETED,
+                    state=state,
+                    path=path,
+                    exit=current,
+                    output=value,
                 )
 
-    @staticmethod
-    def _record(state: State, node: Node, data: dict[str, Any]) -> None:
+    def _qualified(self, node: Node) -> str:
+        return f"{self.scope}.{node.name}" if self.scope else node.name
+
+    def _record(self, state: State, node: Node, data: dict[str, Any]) -> None:
         if state.branch is not None:
             data["branch"] = state.branch
-        state.memory.record(state.step, node.name, node.type, data)
+        state.memory.record(state.step, self._qualified(node), node.type, data)

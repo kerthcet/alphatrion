@@ -1,26 +1,27 @@
-from typing import TYPE_CHECKING, Literal, Self
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from pydantic import Field, PrivateAttr, model_validator
 
-from alphatrion.swarm.nodes.base import FnRef, Node, NodeFn, NodeResult, call
+from alphatrion.swarm.nodes.base import FnIO, FnRef
+from alphatrion.swarm.nodes.decision import DecisionNode
 from alphatrion.swarm.state import State
 
 if TYPE_CHECKING:
     from alphatrion.swarm.pipeline import Builder
 
 
-class SwitchNode(Node):
+class SwitchNode(DecisionNode):
     """
-    Routes by fn(state, **params), which returns the name of a case, e.g.
-    to pick which job to run next. The cases are the keys of the node's
-    branches and exit. A value without a case fails the node, unless a
-    `default` key catches every other value.
+    Routes by fn(state, value, **params), which returns the name of a case,
+    e.g. to pick which job to run next. The cases are the keys of the node's
+    branches and exit. A case without a key fails the node, unless a
+    `default` key catches every other case.
     """
 
     type: Literal["switch"] = "switch"
     fn: FnRef = Field(description="Returns a case, resolved like an action fn.")
 
-    _fn: NodeFn = PrivateAttr()
+    _fn: FnIO = PrivateAttr()
 
     @model_validator(mode="after")
     def has_cases(self) -> Self:
@@ -42,10 +43,13 @@ class SwitchNode(Node):
         )
 
     def _prepare(self, builder: "Builder") -> None:
-        self._fn = builder.resolve(self.fn)
+        self._fn = FnIO(builder.resolve(self.fn), self)
 
-    async def run(self, state: State) -> NodeResult:
-        case = await call(self._fn, state, **self.params)
+    def input_type(self) -> Any:
+        return self._fn.input_type
+
+    async def decide(self, state: State, value: Any) -> tuple[str, Any]:
+        case = await self._fn(state, value, **self.params)
         if not isinstance(case, str):
             raise TypeError(
                 f"Switch {self.name} must return a str, got {type(case).__name__}"
@@ -55,4 +59,4 @@ class SwitchNode(Node):
                 f"Switch {self.name} returned {case!r}, which has no case, "
                 f"expected one of {sorted(self.cases)}"
             )
-        return NodeResult(route=case, output=case)
+        return case, case

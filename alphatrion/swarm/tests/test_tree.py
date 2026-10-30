@@ -1,13 +1,14 @@
 import pytest
+from pydantic import ValidationError
 
 from alphatrion.swarm.tree import ScoreMode, Tree
 
 
 def build_tree():
     tree = Tree()
-    root = tree.add("v0", score=0.1)
-    a = tree.add("v1a", parent_id=root.id, score=0.5)
-    b = tree.add("v1b", parent_id=root.id, score=0.3)
+    root = tree._set_score(tree.add("v0").id, 0.1)
+    a = tree._set_score(tree.add("v1a", parent_id=root.id).id, 0.5)
+    b = tree._set_score(tree.add("v1b", parent_id=root.id).id, 0.3)
     c = tree.add("v2a", parent_id=a.id)
     return tree, root, a, b, c
 
@@ -30,9 +31,16 @@ def test_best():
     assert tree.best() == a
     assert tree.best(ScoreMode.MIN) == root
 
-    tree.set_score(c.id, 0.9)
+    tree._set_score(c.id, 0.9)
     assert tree.best() == c
     assert Tree().best() is None
+
+
+def test_score_is_frozen():
+    tree, root, *_ = build_tree()
+    with pytest.raises(ValidationError):
+        root.score = 1.0
+    assert root.score == 0.1
 
 
 def test_invalid_add():

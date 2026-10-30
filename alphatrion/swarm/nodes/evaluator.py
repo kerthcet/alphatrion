@@ -1,8 +1,10 @@
-from typing import TYPE_CHECKING, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import Field, PrivateAttr
 
-from alphatrion.swarm.nodes.base import FnRef, Node, NodeFn, NodeResult, call
+from alphatrion.swarm.capabilities import Capability
+from alphatrion.swarm.formats import Metrics
+from alphatrion.swarm.nodes.base import FnIO, FnRef, Node, NodeResult
 from alphatrion.swarm.state import State
 
 if TYPE_CHECKING:
@@ -11,24 +13,37 @@ if TYPE_CHECKING:
 
 class EvaluatorNode(Node):
     """
-    Scores the current artifact with fn(state, artifact, **params), which
-    returns a number, and records it as the artifact score.
+    Measures the value with fn(state, value, **params), e.g. a training run,
+    and records the primary score on the current artifact. fn returns
+    Metrics, or a number, which becomes the "score" metric. The output is
+    the Metrics.
     """
 
-    ROUTES: ClassVar[frozenset[str]] = frozenset()
+    ALWAYS_IMMUTABLE: ClassVar[bool] = True
+
+    CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset({Capability.SCORE})
+    routes: ClassVar[frozenset[str] | None] = frozenset()
 
     type: Literal["evaluator"] = "evaluator"
-    fn: FnRef = Field(description="Scores the artifact, resolved like an action fn.")
+    fn: FnRef = Field(description="Measures the value, resolved like an action fn.")
 
-    _fn: NodeFn = PrivateAttr()
+    _fn: FnIO = PrivateAttr()
 
     def _prepare(self, builder: "Builder") -> None:
-        self._fn = builder.resolve(self.fn)
+        self._fn = FnIO(builder.resolve(self.fn), self)
 
-    async def run(self, state: State) -> NodeResult:
+    def input_type(self) -> Any:
+        return self._fn.input_type
+
+    def output_type(self, route: str | None = None, received: Any = Any) -> Any:
+        return Metrics
+
+    async def run(self, state: State, value: Any) -> NodeResult:
         artifact = state.current
         if artifact is None:
             raise RuntimeError(f"Evaluator {self.name} requires a current artifact")
-        score = float(await call(self._fn, state, artifact, **self.params))
-        state.tree.set_score(artifact.id, score)
-        return NodeResult(output=score)
+        metrics = await self._fn(state, value, **self.params)
+        if not isinstance(metrics, Metrics):
+            metrics = Metrics(values={"score": float(metrics)}, primary="score")
+        state.tree._set_score(artifact.id, metrics.score)
+        return NodeResult(output=metrics)

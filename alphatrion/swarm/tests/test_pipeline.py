@@ -139,7 +139,7 @@ async def test_explore_pipeline(tmp_path):
 
     def propose_variant(state: State):
         # Each explorer improves its own lineage by one per iteration.
-        state.commit(state.current.content + 1)
+        return state.commit(state.current.content + 1)
 
     def improved(state: State):
         return state.current.score >= 2 + int(state.branch[-2])
@@ -262,7 +262,7 @@ class LLMNode(Node):
     type: Literal["llm"] = "llm"
     model: str
 
-    async def run(self, state: State) -> NodeResult:
+    async def run(self, state: State, value) -> NodeResult:
         return NodeResult(output=self.model)
 
 

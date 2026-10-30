@@ -17,8 +17,12 @@ class Artifact(BaseModel):
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     parent_id: str | None = None
     content: Any = None
+    # Frozen, so only an evaluator node can score an artifact, through the
+    # tree: the code being improved can propose artifacts but not judge them.
     score: float | None = Field(
-        default=None, description="The evaluation score, None if not evaluated."
+        default=None,
+        frozen=True,
+        description="The evaluation score, None if not evaluated.",
     )
     created_by: str | None = Field(
         default=None, description="The name of the node that created the artifact."
@@ -53,15 +57,14 @@ class Tree:
         self,
         content: Any,
         parent_id: str | None = None,
-        score: float | None = None,
         created_by: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Artifact:
+        """Add an unscored artifact. Only an evaluator node scores it."""
         return self._insert(
             Artifact(
                 parent_id=parent_id,
                 content=content,
-                score=score,
                 created_by=created_by,
                 metadata=metadata or {},
             )
@@ -89,9 +92,12 @@ class Tree:
         except KeyError:
             raise KeyError(f"Artifact {artifact_id} not found") from None
 
-    def set_score(self, artifact_id: str, score: float) -> Artifact:
+    def _set_score(self, artifact_id: str, score: float) -> Artifact:
+        """Score an artifact. Private to the evaluator node, which is the only
+        place scores come from, since the evaluation is never improved."""
         artifact = self.get(artifact_id)
-        artifact.score = score
+        # score is frozen against assignment, so it's written directly.
+        artifact.__dict__["score"] = score
         return artifact
 
     def parent(self, artifact_id: str) -> Artifact | None:

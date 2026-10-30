@@ -7,7 +7,7 @@ and once it stalls, explore jumps back to a random earlier artifact and
 makes several edits. Another condition breaks the loop once the target is
 reached. Run it from the repository root:
 
-    python examples/condition_branches/main.py
+    python examples/basics/condition_branches/main.py
 """
 
 import asyncio
@@ -15,7 +15,7 @@ import random
 import string
 from pathlib import Path
 
-from alphatrion.swarm import State, build_graph
+from alphatrion.swarm import Artifact, State, build_graph
 
 TARGET = "METHINKS IT IS LIKE A WEASEL"
 ALPHABET = string.ascii_uppercase + " "
@@ -29,33 +29,32 @@ def mutate(content: str, edits: int) -> str:
     return "".join(chars)
 
 
-def seed(state: State):
-    state.commit("".join(rng.choice(ALPHABET) for _ in TARGET))
+def seed(state: State) -> Artifact:
+    return state.commit("".join(rng.choice(ALPHABET) for _ in TARGET))
 
 
-def score(state: State, artifact) -> float:
+def score(state: State, artifact: Artifact) -> float:
     return sum(a == b for a, b in zip(artifact.content, TARGET, strict=True)) / len(
         TARGET
     )
 
 
 def stalled(state: State, patience: int) -> bool:
-    # The number of iterations since the best score last improved.
-    if state.memory.get("stalled", 0) >= patience:
-        state.memory.set("stalled", 0)
-        return True
-    return False
+    # The number of iterations since the best score last improved. A
+    # condition only decides, so the explore branch resets it.
+    return state.memory.get("stalled", 0) >= patience
 
 
-def mutate_best(state: State):
+def mutate_best(state: State) -> Artifact:
     state.checkout(state.tree.best().id)
-    state.commit(mutate(state.current.content, edits=1))
+    return state.commit(mutate(state.current.content, edits=1))
 
 
-def jump_from_ancestor(state: State):
+def jump_from_ancestor(state: State) -> Artifact:
+    state.memory.set("stalled", 0)
     lineage = state.tree.lineage(state.tree.best().id)
     state.checkout(rng.choice(lineage).id)
-    state.commit(mutate(state.current.content, edits=3))
+    return state.commit(mutate(state.current.content, edits=3))
 
 
 def track_progress(state: State):

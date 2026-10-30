@@ -40,14 +40,13 @@ class State:
     def commit(
         self,
         content: Any,
-        score: float | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Artifact:
-        """Add a new artifact derived from the current one and make it current."""
+        """Add a new artifact derived from the current one and make it current.
+        It is unscored until an evaluator node scores it."""
         artifact = self.tree.add(
             content,
             parent_id=self.current_id,
-            score=score,
             created_by=self.node,
             metadata=metadata,
         )

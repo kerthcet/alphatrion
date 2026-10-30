@@ -1,7 +1,7 @@
 import inspect
 from abc import abstractmethod
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Annotated, Any, ClassVar
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, get_type_hints
 
 from pydantic import (
     BaseModel,
@@ -13,6 +13,7 @@ from pydantic import (
     field_validator,
 )
 
+from alphatrion.swarm.capabilities import Capability, StateView
 from alphatrion.swarm.state import State
 
 if TYPE_CHECKING:
@@ -33,6 +34,9 @@ class NodeResult(BaseModel):
 
     route: str | None = None
     output: Any = None
+    # What the node found, recorded in memory but not passed on, e.g. why a
+    # guardrail failed. Passthrough nodes return their input as output.
+    details: Any = None
     exit: str | None = None
 
 
@@ -41,6 +45,51 @@ async def call(fn: NodeFn, *args: Any, **kwargs: Any) -> Any:
     if inspect.isawaitable(result):
         result = await result
     return result
+
+
+class FnIO:
+    """
+    How a node function takes the value flowing into the node, read from its
+    signature: fn(state, value, **params), or fn(state, **params) for a
+    function that doesn't use it. The value is the first parameter after
+    state that has no default and isn't a param, and its annotation is the
+    input format. The return annotation is the output format.
+
+    The function gets the state as a StateView, limited to the capabilities
+    of its node.
+    """
+
+    def __init__(self, fn: NodeFn, node: "Node"):
+        self.fn = fn
+        self.granted = node.granted
+        params = node.params
+        try:
+            hints = get_type_hints(fn)
+        except Exception:
+            hints = {}
+        try:
+            parameters = list(inspect.signature(fn).parameters.values())[1:]
+        except (TypeError, ValueError):
+            parameters = []
+        value = next(
+            (
+                p
+                for p in parameters
+                if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+                and p.default is p.empty
+                and p.name not in params
+            ),
+            None,
+        )
+        self.takes_value = value is not None
+        self.input_type = hints.get(value.name, Any) if value is not None else Any
+        self.output_type = hints.get("return", Any)
+
+    async def __call__(self, state: State, value: Any, **params: Any) -> Any:
+        view = StateView(state, self.granted)
+        if self.takes_value:
+            return await call(self.fn, view, value, **params)
+        return await call(self.fn, view, **params)
 
 
 def _route_keys(v: Any) -> Any:
@@ -66,14 +115,19 @@ def _parse_nodes(value: Any, info: ValidationInfo) -> Any:
         if not isinstance(item, dict):
             nodes.append(item)
             continue
-        node_cls = types.get(item.get("type"))
+        spec = dict(item)
+        # A node with nodes or a subgraph file but no type is a subgraph, so
+        # it's written like a pipeline file: a name and its nodes.
+        if "type" not in spec and ("nodes" in spec or "subgraph" in spec):
+            spec["type"] = "subgraph"
+        node_cls = types.get(spec.get("type"))
         if node_cls is None:
             raise ValueError(
-                f"Unknown type {item.get('type')!r} of node {item.get('name')}, "
+                f"Unknown type {spec.get('type')!r} of node {spec.get('name')}, "
                 f"expected one of {sorted(types)} or a type passed to "
                 "build_graph(node_types=...)"
             )
-        nodes.append(node_cls.model_validate(item, context=info.context))
+        nodes.append(node_cls.model_validate(spec, context=info.context))
     return nodes
 
 
@@ -93,10 +147,15 @@ class Node(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # The routes the node can take, checked against its exit and branches
-    # keys when a pipeline is built. None means any route, for nodes whose
-    # functions choose it by returning a NodeResult.
-    ROUTES: ClassVar[frozenset[str] | None] = None
+    # The routes the node can take, only to check its exit and branches keys
+    # when a pipeline is built. None means any route, for nodes whose
+    # functions choose it, e.g. by returning a NodeResult.
+    routes: ClassVar[frozenset[str] | None] = None
+    # Nodes that judge the artifact are never improved, so the system can't
+    # change what counts as an improvement.
+    ALWAYS_IMMUTABLE: ClassVar[bool] = False
+    # The most capabilities a node of this type can have.
+    CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
 
     name: str
     type: str
@@ -116,6 +175,20 @@ class Node(BaseModel):
         description="The nodes to run for each route of this node. A branch "
         "continues with the node after this one when it is done.",
     )
+    mutable: bool = Field(
+        default=False,
+        description="Whether self-improvement may change the node. An immutable "
+        "node stays as written, its nested nodes included, which "
+        "check_mutation() enforces. Evaluators and guardrails are always "
+        "immutable.",
+    )
+    capabilities: list[Capability] | None = Field(
+        default=None,
+        description="What the node may do beyond reading the state, e.g. "
+        "commit artifacts. None grants all its type can have, and a list "
+        "narrows them; it can't add any. Self-improvement can only narrow the "
+        "capabilities of a mutable node, never add to them.",
+    )
 
     _prepared: bool = PrivateAttr(default=False)
 
@@ -123,6 +196,35 @@ class Node(BaseModel):
     @classmethod
     def bool_routes(cls, v: Any) -> Any:
         return _route_keys(v)
+
+    @field_validator("mutable")
+    @classmethod
+    def judges_are_immutable(cls, v: bool) -> bool:
+        if v and cls.ALWAYS_IMMUTABLE:
+            raise ValueError(
+                f"A {cls.node_type()} node is always immutable, since it "
+                "judges what counts as an improvement"
+            )
+        return v
+
+    @field_validator("capabilities")
+    @classmethod
+    def within_type(cls, v: list[Capability] | None) -> list[Capability] | None:
+        extra = set(v or []) - cls.CAPABILITIES
+        if extra:
+            allowed = ", ".join(sorted(cls.CAPABILITIES)) or "none"
+            raise ValueError(
+                f"A {cls.node_type()} node can't have {', '.join(sorted(extra))}, "
+                f"its capabilities are: {allowed}"
+            )
+        return v
+
+    @property
+    def granted(self) -> frozenset[Capability]:
+        """The capabilities the node has."""
+        if self.capabilities is None:
+            return self.CAPABILITIES
+        return frozenset(self.capabilities)
 
     @classmethod
     def node_type(cls) -> str:
@@ -146,8 +248,20 @@ class Node(BaseModel):
         """Routes that must have an outgoing edge, checked by the graph."""
         return set()
 
+    def input_type(self) -> Any:
+        """The format of the value the node takes, Any if it takes any."""
+        return Any
+
+    def output_type(self, route: str | None = None, received: Any = Any) -> Any:
+        """The format of the value the node returns on a route, Any if
+        unknown. received is the format flowing into the node, for nodes
+        that return the value they receive, like decisions."""
+        return Any
+
     @abstractmethod
-    async def run(self, state: State) -> NodeResult: ...
+    async def run(self, state: State, value: Any) -> NodeResult:
+        """Run the node on the value from the node before it. The output of
+        the result is the value passed to the node after it."""
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(name={self.name!r})"

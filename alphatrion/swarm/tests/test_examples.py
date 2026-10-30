@@ -4,7 +4,9 @@ from pathlib import Path
 
 import pytest
 
-EXAMPLES = Path(__file__).parents[3] / "examples"
+# The basic examples run anywhere. The cases need hardware or credentials,
+# e.g. a GPU and API keys, so each has its own test with stand-ins.
+EXAMPLES = Path(__file__).parents[3] / "examples" / "basics"
 
 
 @pytest.mark.parametrize(

@@ -74,7 +74,7 @@ def outer(loop: LoopNode) -> Graph:
 async def test_loop_breaks():
     result = await outer(build_debug_loop(passes_after=2)).run()
     assert result.path == ["debug", "ship"]
-    assert result.state.memory.history(node="debug")[0].data["output"] == {
+    assert result.state.memory.history(node="debug")[0].data["details"] == {
         "iterations": 2
     }
     # The body records into the same memory.
@@ -174,12 +174,9 @@ async def test_parallel_join_all_and_custom():
     state = State()
     state.commit("seed")
     result = await wrap(build_explore(join="all")).run(state=state)
-    ids = result.state.memory.history(node="explore")[0].data["output"]
-    assert [state.tree.get(i).content for i in ids] == [
-        "variant-0",
-        "variant-1",
-        "variant-2",
-    ]
+    # join="all" outputs every branch's value, here its Metrics.
+    outputs = result.output
+    assert [m.score for m in outputs] == [0.2, 0.9, 0.5]
     # join="all" doesn't move the parent's current artifact.
     assert state.current.content == "seed"
 
@@ -232,8 +229,7 @@ async def test_parallel_wait_for_k_cancels_the_rest():
     result = await wrap(node).run(state=seeded())
 
     assert result.status == GraphStatus.COMPLETED
-    ids = result.state.memory.history(node="race")[0].data["output"]
-    assert [result.state.tree.get(i).content for i in ids] == [1, 2]
+    assert [m.score for m in result.output] == [1, 2]
     # Branch 3 was cancelled before it finished.
     assert finished == [1, 2]
 
@@ -263,8 +259,7 @@ async def test_parallel_raise_only_fails_its_branch():
     node, _ = build_racers(wait=2, fail=set(), raises={0})
     result = await wrap(node).run(state=seeded())
     assert result.status == GraphStatus.COMPLETED
-    ids = result.state.memory.history(node="race")[0].data["output"]
-    assert [result.state.tree.get(i).content for i in ids] == [1, 2]
+    assert [m.score for m in result.output] == [1, 2]
 
 
 @pytest.mark.asyncio

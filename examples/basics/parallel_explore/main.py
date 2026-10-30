@@ -6,7 +6,7 @@ the shared tree, backtracking when a variant is worse. Once every explorer
 reaches the target score, the best artifact among them is kept. Run it from
 the repository root:
 
-    python examples/parallel_explore/main.py
+    python examples/basics/parallel_explore/main.py
 """
 
 import asyncio
@@ -15,6 +15,7 @@ import string
 
 from alphatrion.swarm import (
     ActionNode,
+    Artifact,
     EvaluatorNode,
     LoopNode,
     ParallelNode,
@@ -28,19 +29,19 @@ ALPHABET = string.ascii_uppercase + " "
 rng = random.Random(7)
 
 
-def seed(state: State):
-    state.commit("".join(rng.choice(ALPHABET) for _ in TARGET))
+def seed(state: State) -> Artifact:
+    return state.commit("".join(rng.choice(ALPHABET) for _ in TARGET))
 
 
-def propose(state: State):
+def propose(state: State) -> Artifact:
     # Each explorer mutates its own current artifact, not the global best,
     # so the explorers search independently.
     parent = state.current.content
     i = rng.randrange(len(parent))
-    state.commit(parent[:i] + rng.choice(ALPHABET) + parent[i + 1 :])
+    return state.commit(parent[:i] + rng.choice(ALPHABET) + parent[i + 1 :])
 
 
-def score(state: State, artifact) -> float:
+def score(state: State, artifact: Artifact) -> float:
     return sum(a == b for a, b in zip(artifact.content, TARGET, strict=True)) / len(
         TARGET
     )
@@ -118,7 +119,7 @@ async def main():
         print(f"error: {result.error}")
     for entry in state.memory.history(node="explorer"):
         print(
-            f"  {entry.data['branch']}: {entry.data['output']['iterations']} iterations"
+            f"  {entry.data['branch']}: {entry.data['details']['iterations']} iterations"
         )
 
 

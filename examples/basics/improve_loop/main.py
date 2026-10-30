@@ -4,7 +4,7 @@ An improvement loop defined in YAML.
 The artifact is a string evolving toward a target sentence, a stand-in for a
 prompt or a program improved by an LLM. Run it from the repository root:
 
-    python examples/improve_loop/main.py
+    python examples/basics/improve_loop/main.py
 """
 
 import asyncio
@@ -12,18 +12,18 @@ import random
 import string
 from pathlib import Path
 
-from alphatrion.swarm import State, build_graph
+from alphatrion.swarm import Artifact, State, build_graph
 
 TARGET = "METHINKS IT IS LIKE A WEASEL"
 ALPHABET = string.ascii_uppercase + " "
 rng = random.Random(42)
 
 
-def seed(state: State):
-    state.commit("".join(rng.choice(ALPHABET) for _ in TARGET))
+def seed(state: State) -> Artifact:
+    return state.commit("".join(rng.choice(ALPHABET) for _ in TARGET))
 
 
-def propose(state: State):
+def propose(state: State) -> Artifact:
     # Improve on the best artifact so far, so a worse variant is never a parent.
     best = state.tree.best()
     if best is not None:
@@ -31,7 +31,7 @@ def propose(state: State):
     # Mutate one character, a stand-in for an LLM proposing an edit.
     parent = state.current.content
     i = rng.randrange(len(parent))
-    state.commit(parent[:i] + rng.choice(ALPHABET) + parent[i + 1 :])
+    return state.commit(parent[:i] + rng.choice(ALPHABET) + parent[i + 1 :])
 
 
 def not_duplicate(state: State):
@@ -39,7 +39,7 @@ def not_duplicate(state: State):
     return state.current.content != parent.content, "same as its parent"
 
 
-def score(state: State, artifact) -> float:
+def score(state: State, artifact: Artifact) -> float:
     return sum(a == b for a, b in zip(artifact.content, TARGET, strict=True)) / len(
         TARGET
     )
@@ -66,7 +66,7 @@ async def main():
     state = result.state
     best = state.tree.best()
     lineage = state.tree.lineage(best.id)
-    loop = state.memory.history(node="improve")[0].data["output"]
+    loop = state.memory.history(node="improve")[0].data["details"]
     rejected = sum(
         e.data["route"] == "fail" for e in state.memory.history(node="guard")
     )

@@ -27,7 +27,7 @@ def propose(state: State, step: int = 1):
     if best is not None:
         state.checkout(best.id)
     base = state.current.content if state.current else 0
-    return state.commit(base + step).id
+    return state.commit(base + step)
 
 
 def not_negative(state: State):
@@ -67,7 +67,7 @@ async def test_improvement_loop():
     assert [a.content for a in state.tree.lineage(state.current_id)] == [1, 2, 3]
     assert state.tree.best().score == 3
     assert all(a.created_by == "propose" for a in state.tree)
-    assert state.memory.history(node="improve")[0].data["output"] == {"iterations": 3}
+    assert state.memory.history(node="improve")[0].data["details"] == {"iterations": 3}
     assert len(state.memory.history(node="propose")) == 3
 
 
@@ -88,7 +88,7 @@ async def test_loop_max_iters():
     assert result.status == GraphStatus.COMPLETED
     loop = result.state.memory.history(node="improve")[0]
     assert loop.data["route"] == "max_iters"
-    assert loop.data["output"] == {"iterations": 5}
+    assert loop.data["details"] == {"iterations": 5}
 
 
 @pytest.mark.asyncio
@@ -116,8 +116,8 @@ async def test_guardrail_routes_on_fail():
     assert result.status == GraphStatus.COMPLETED
     guard = result.state.memory.history(node="guard")
     assert [e.data["route"] for e in guard] == ["fail", "pass"]
-    assert guard[0].data["output"] == ["artifact is negative"]
-    assert guard[1].data["output"] == []
+    assert guard[0].data["details"] == ["artifact is negative"]
+    assert guard[1].data["details"] == []
 
 
 def test_cycles_rejected():

@@ -39,8 +39,12 @@ swarm = []
 s3 = [
     "boto3>=1.35.0",
 ]
+# Claude models in the model router. OpenAI-compatible models work without it.
+anthropic = [
+    "anthropic>=0.74.1",
+]
 all = [
-    "alphatrion[framework,swarm,s3]",
+    "alphatrion[framework,swarm,s3,anthropic]",
 ]
 
 [dependency-groups]

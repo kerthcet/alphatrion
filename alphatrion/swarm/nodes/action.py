@@ -1,8 +1,9 @@
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import Field, PrivateAttr
 
-from alphatrion.swarm.nodes.base import FnRef, Node, NodeFn, NodeResult, call
+from alphatrion.swarm.capabilities import Capability
+from alphatrion.swarm.nodes.base import FnIO, FnRef, Node, NodeResult
 from alphatrion.swarm.state import State
 
 if TYPE_CHECKING:
@@ -11,10 +12,16 @@ if TYPE_CHECKING:
 
 class ActionNode(Node):
     """
-    Runs fn(state, **params), e.g. to call an LLM to propose a new artifact.
-    The return value is the node output. fn can also return a NodeResult
-    to choose the route itself.
+    Runs fn(state, value, **params) on the value from the node before it, or
+    fn(state, **params) if fn doesn't take it, e.g. to build a model request
+    or apply a model's edit. Its return value is the output, and its
+    annotations are the input and output formats. fn can also return a
+    NodeResult to choose the route itself.
     """
+
+    CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
+        {Capability.COMMIT, Capability.REMEMBER}
+    )
 
     type: Literal["action"] = "action"
     fn: FnRef = Field(
@@ -23,13 +30,19 @@ class ActionNode(Node):
         "or the function itself."
     )
 
-    _fn: NodeFn = PrivateAttr()
+    _fn: FnIO = PrivateAttr()
 
     def _prepare(self, builder: "Builder") -> None:
-        self._fn = builder.resolve(self.fn)
+        self._fn = FnIO(builder.resolve(self.fn), self)
 
-    async def run(self, state: State) -> NodeResult:
-        result = await call(self._fn, state, **self.params)
+    def input_type(self) -> Any:
+        return self._fn.input_type
+
+    def output_type(self, route: str | None = None, received: Any = Any) -> Any:
+        return self._fn.output_type
+
+    async def run(self, state: State, value: Any) -> NodeResult:
+        result = await self._fn(state, value, **self.params)
         if isinstance(result, NodeResult):
             return result
         return NodeResult(output=result)

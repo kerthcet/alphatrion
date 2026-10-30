@@ -6,7 +6,7 @@ cross over the two best, or restart a new lineage from the seed. The job
 that improves the best artifact is credited, so the report shows which jobs
 pay off. Run it from the repository root:
 
-    python examples/switch_jobs/main.py
+    python examples/basics/switch_jobs/main.py
 """
 
 import asyncio
@@ -15,7 +15,7 @@ import string
 from collections import Counter
 from pathlib import Path
 
-from alphatrion.swarm import State, build_graph
+from alphatrion.swarm import Artifact, State, build_graph
 
 TARGET = "METHINKS IT IS LIKE A WEASEL"
 ALPHABET = string.ascii_uppercase + " "
@@ -29,11 +29,11 @@ def mutate(content: str, edits: int) -> str:
     return "".join(chars)
 
 
-def seed(state: State):
-    state.commit("".join(rng.choice(ALPHABET) for _ in TARGET))
+def seed(state: State) -> Artifact:
+    return state.commit("".join(rng.choice(ALPHABET) for _ in TARGET))
 
 
-def score(state: State, artifact) -> float:
+def score(state: State, artifact: Artifact) -> float:
     return sum(a == b for a, b in zip(artifact.content, TARGET, strict=True)) / len(
         TARGET
     )
@@ -43,12 +43,12 @@ def pick_job(state: State, weights: dict[str, float]) -> str:
     return rng.choices(list(weights), weights=list(weights.values()))[0]
 
 
-def mutate_best(state: State):
+def mutate_best(state: State) -> Artifact:
     state.checkout(state.tree.best().id)
-    state.commit(mutate(state.current.content, edits=1))
+    return state.commit(mutate(state.current.content, edits=1))
 
 
-def crossover_top(state: State):
+def crossover_top(state: State) -> Artifact:
     # Take each character from either of the two best artifacts, as a child
     # of the best one.
     scored = sorted(
@@ -61,17 +61,17 @@ def crossover_top(state: State):
         rng.choice(pair) for pair in zip(best.content, other.content, strict=True)
     )
     state.checkout(best.id)
-    state.commit(child, metadata={"co_parent": other.id})
+    return state.commit(child, metadata={"co_parent": other.id})
 
 
-def restart_from_seed(state: State):
+def restart_from_seed(state: State) -> Artifact:
     state.checkout(state.tree.root.id)
-    state.commit(mutate(state.current.content, edits=8))
+    return state.commit(mutate(state.current.content, edits=8))
 
 
 def credit_job(state: State):
-    # The job this iteration ran is the output of the switch, in memory.
-    job = state.memory.history(node="pick_job", last=1)[0].data["output"]
+    # The job this iteration ran is the case the switch picked, in memory.
+    job = state.memory.history(node="pick_job", last=1)[0].data["details"]
     runs = state.memory.get("runs", Counter())
     runs[job] += 1
     state.memory.set("runs", runs)
@@ -113,7 +113,7 @@ async def main():
     result = await graph.run()
 
     loop = result.state.memory.history(node="evolve")[0].data
-    print(f"status: {result.status.value}, iterations: {loop['output']['iterations']}")
+    print(f"status: {result.status.value}, iterations: {loop['details']['iterations']}")
     if result.error:
         print(f"error: {result.error}")
 

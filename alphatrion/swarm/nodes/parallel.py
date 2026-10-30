@@ -1,9 +1,11 @@
 import asyncio
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Literal, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, get_type_hints
 
 from pydantic import Field, PrivateAttr, model_validator
 
+from alphatrion.swarm.capabilities import Capability, StateView
+from alphatrion.swarm.formats import unify
 from alphatrion.swarm.nodes.base import (
     FnRef,
     Node,
@@ -22,25 +24,26 @@ if TYPE_CHECKING:
 JoinFn = Callable[..., Any]
 
 
-def join_best(state: State, results: list["GraphResult"]) -> str:
-    """Make the best scored artifact among the branches current."""
+def join_best(state: State, results: list["GraphResult"]) -> Any:
+    """Make the best scored artifact among the branches current, and output
+    the value of the branch that produced it."""
     scored = [
-        r.state.current
+        r
         for r in results
         if r.state.current is not None and r.state.current.score is not None
     ]
     if not scored:
         raise RuntimeError("No branch ended with a scored artifact")
     # max() keeps the first on a tie, i.e. the lowest branch index.
-    best = max(scored, key=lambda a: a.score)
-    state.checkout(best.id)
-    return best.id
+    best = max(scored, key=lambda r: r.state.current.score)
+    state.checkout(best.state.current_id)
+    return best.output
 
 
-def join_all(state: State, results: list["GraphResult"]) -> list[str | None]:
-    """Collect the current artifact of every branch, without moving the
-    parent's current artifact."""
-    return [r.state.current_id for r in results]
+def join_all(state: State, results: list["GraphResult"]) -> list[Any]:
+    """Output the values of every branch, in branch order, without moving
+    the parent's current artifact."""
+    return [r.output for r in results]
 
 
 JOINS: dict[str, JoinFn] = {"best": join_best, "all": join_all}
@@ -48,8 +51,8 @@ JOINS: dict[str, JoinFn] = {"best": join_best, "all": join_all}
 
 class ParallelNode(Node):
     """
-    Runs its nodes in n concurrent branches, e.g. to explore several
-    improvements of the current artifact at once. Each branch runs on a
+    Runs its nodes in n concurrent branches on the value it receives, e.g.
+    to explore several improvements of the current artifact at once. Each branch runs on a
     fork of the state: it shares the memory and the tree, but evolves its
     own current artifact from the parent's.
 
@@ -65,6 +68,9 @@ class ParallelNode(Node):
 
     join merges the finished branches: "best", "all", or a JoinFn.
     """
+
+    # The join moves the current artifact to the one it picks.
+    CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset({Capability.COMMIT})
 
     type: Literal["parallel"] = "parallel"
     nodes: NodeList = Field(min_length=1, description="The body of each branch.")
@@ -89,6 +95,22 @@ class ParallelNode(Node):
             raise ValueError(f"Parallel {self.name} requires wait <= n")
         return self
 
+    def input_type(self) -> Any:
+        return self._graph.input_type
+
+    def output_type(self, route: str | None = None, received: Any = Any) -> Any:
+        from alphatrion.swarm.graph import DONE, END
+
+        if self._join is join_best:
+            return unify(
+                self._graph.exit_types.get(DONE, [])
+                + self._graph.exit_types.get(END, [])
+            )
+        try:
+            return get_type_hints(self._join).get("return", Any)
+        except Exception:
+            return Any
+
     def _prepare(self, builder: "Builder") -> None:
         from alphatrion.swarm.graph import DONE
 
@@ -98,11 +120,12 @@ class ParallelNode(Node):
         else:
             self._join = builder.resolve(self.join)
 
-    async def run(self, state: State) -> NodeResult:
+    async def run(self, state: State, value: Any) -> NodeResult:
         from alphatrion.swarm.graph import GraphStatus
 
         async def branch(i: int) -> tuple[int, "GraphResult"]:
-            return i, await self._graph.run(state=state.fork(f"{self.name}[{i}]"))
+            branch_state = state.fork(f"{self.name}[{i}]")
+            return i, await self._graph.run(state=branch_state, value=value)
 
         need = self.n if self.wait is None else self.wait
         tasks = [asyncio.create_task(branch(i)) for i in range(self.n)]
@@ -134,7 +157,8 @@ class ParallelNode(Node):
             )
 
         results = [r for _, r in sorted(finished, key=lambda x: x[0])]
-        output = await call(self._join, state, results, **self.params)
+        view = StateView(state, self.granted)
+        output = await call(self._join, view, results, **self.params)
         if isinstance(output, NodeResult):
             return output
         return NodeResult(output=output)
