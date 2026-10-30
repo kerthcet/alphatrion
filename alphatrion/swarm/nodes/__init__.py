@@ -1,0 +1,46 @@
+from alphatrion.swarm.nodes.action import ActionNode
+from alphatrion.swarm.nodes.base import (
+    FnRef,
+    Node,
+    NodeFn,
+    NodeList,
+    NodeResult,
+)
+from alphatrion.swarm.nodes.condition import ConditionNode
+from alphatrion.swarm.nodes.evaluator import EvaluatorNode
+from alphatrion.swarm.nodes.guardrail import GuardrailNode
+from alphatrion.swarm.nodes.loop import LoopNode
+from alphatrion.swarm.nodes.parallel import JOINS, JoinFn, ParallelNode
+from alphatrion.swarm.nodes.switch import SwitchNode
+
+# The built-in node types, by type.
+BUILTIN_TYPES: dict[str, type[Node]] = {
+    node.node_type(): node
+    for node in (
+        ActionNode,
+        ConditionNode,
+        EvaluatorNode,
+        GuardrailNode,
+        LoopNode,
+        ParallelNode,
+        SwitchNode,
+    )
+}
+
+__all__ = [
+    "BUILTIN_TYPES",
+    "JOINS",
+    "ActionNode",
+    "ConditionNode",
+    "EvaluatorNode",
+    "FnRef",
+    "GuardrailNode",
+    "JoinFn",
+    "LoopNode",
+    "Node",
+    "NodeFn",
+    "NodeList",
+    "NodeResult",
+    "ParallelNode",
+    "SwitchNode",
+]

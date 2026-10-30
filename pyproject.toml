@@ -75,6 +75,7 @@ exclude = [
     "alphatrion/*/tests",
     "alphatrion/framework/hack",
     "alphatrion/framework/docs",
+    "alphatrion/swarm/docs",
     "alphatrion/framework/dashboard",
     "alphatrion/framework/config/grafana",
     "alphatrion/framework/config/prometheus",
