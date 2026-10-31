@@ -7,28 +7,43 @@ expert-load.json:
 """
 
 import asyncio
+import logging
 import sys
 from pathlib import Path
 
-from alphatrion.swarm import ScoreMode, State, build_graph
+from alphatrion.swarm import HostStore, ScoreMode, build_graph, tracing
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 
-from eplb import FUNCTIONS, attempts  # noqa: E402
+from eplb import FUNCTIONS  # noqa: E402
 
 
 async def main(data: str):
+    # A line for each step as it runs: a model's reply can take a minute.
+    logging.basicConfig(format="%(message)s")
+    logging.getLogger("alphatrion.swarm").setLevel(logging.INFO)
     graph = build_graph(HERE / "pipeline.yaml", functions=FUNCTIONS)
-    state = State()
+    # The experiment, next to the data: each run of it continues the last,
+    # with its artifacts, metrics, requests and traces kept.
+    store = HostStore(Path(data) / "experiments", experiment="eplb", checkpoint_every=1)
+    tracing.setup(store.spans())
+    state = store.load()
     result = await graph.run(
-        state=state, inputs={"data": data, "instructions": str(HERE / "proposer.md")}
+        state=state,
+        inputs={"data": data, "instructions": str(HERE / "proposer.md")},
+        store=store,
     )
 
-    print(attempts(state))
+    # Every program, under the one it was edited from, with its score.
+    print(state.tree.render())
     best = state.tree.best(ScoreMode.MAX)
     if best is not None:
         print(f"best: {best.score:.4f} ({best.metadata['description']})")
+    print(f"requests: {dict(state.requests.counts())}, kept in {store.path}")
+    print(
+        f"to see it again, or a program: python -m alphatrion.swarm.show {store.path} [id]"
+    )
     print(f"status: {result.status.value}")
     if result.error:
         print(f"error: {result.error}")

@@ -46,7 +46,9 @@ from alphatrion.swarm.pipeline import (
     check_mutation,
     load_pipeline,
 )
+from alphatrion.swarm.requests import RequestRecord, Requests
 from alphatrion.swarm.state import State
+from alphatrion.swarm.store import HostStore, RunStore
 from alphatrion.swarm.tree import Artifact, ScoreMode, Tree
 
 __all__ = [
@@ -83,6 +85,10 @@ __all__ = [
     "ChoiceError",
     "ScoreMode",
     "State",
+    "HostStore",
+    "RunStore",
+    "RequestRecord",
+    "Requests",
     "SwitchNode",
     "Pipeline",
     "Graph",

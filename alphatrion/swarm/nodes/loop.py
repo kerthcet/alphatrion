@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import Field, PrivateAttr
 
+from alphatrion.swarm.context import current_store, in_iteration
 from alphatrion.swarm.nodes.base import (
     NO_OUTPUT,
     FnIO,
@@ -74,8 +75,12 @@ class LoopNode(Node):
         iterations = 0
         output = NO_OUTPUT
         while self.max_iters is None or iterations < self.max_iters:
-            result = await self._graph.run(state=state)
+            with in_iteration(state.node or self.name, iterations + 1):
+                result = await self._graph.run(state=state)
             iterations += 1
+            store = current_store()
+            if store is not None:
+                store.iteration(state, state.node or self.name, iterations)
             if result.status == GraphStatus.FAILED:
                 raise RuntimeError(
                     f"Loop {self.name} failed at iteration {iterations}: {result.error}"

@@ -60,3 +60,24 @@ class AnthropicClient:
             input_tokens=response.usage.input_tokens,
             output_tokens=response.usage.output_tokens,
         )
+
+
+class BedrockClient(AnthropicClient):
+    """
+    Calls Claude models through AWS Bedrock, e.g. us.anthropic.claude-opus-5-5,
+    with the AWS credentials of the environment, e.g. a profile or SSO, as
+    Claude Code with CLAUDE_CODE_USE_BEDROCK does, and the region of
+    AWS_REGION unless given. No Anthropic API key is needed.
+    """
+
+    provider = "bedrock"
+
+    def __init__(self, region: str | None = None, base_url: str | None = None):
+        if anthropic is None:
+            raise ImportError(
+                "Claude models on Bedrock require the anthropic package, "
+                "install it with `pip install alphatrion[anthropic]`"
+            )
+        self._client = anthropic.AsyncAnthropicBedrock(
+            aws_region=region, base_url=base_url
+        )

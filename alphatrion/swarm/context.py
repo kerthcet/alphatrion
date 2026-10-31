@@ -66,3 +66,40 @@ def output_scope() -> Iterator[ChainMap]:
         yield scope
     finally:
         _outputs.reset(token)
+
+
+# The store keeping the run, if any, given to graph.run(store=...). Nested
+# runs record into it too.
+_store: ContextVar[Any] = ContextVar("store", default=None)
+
+
+def current_store() -> Any:
+    return _store.get()
+
+
+@contextmanager
+def using_store(store: Any) -> Iterator[None]:
+    token = _store.set(store)
+    try:
+        yield
+    finally:
+        _store.reset(token)
+
+
+# The iteration each loop running is at, by loop, e.g. {"research": 4}, so
+# what a node records says where in the run it happened. Nested loops add
+# theirs.
+_iterations: ContextVar[dict[str, int] | None] = ContextVar("iterations", default=None)
+
+
+def current_iterations() -> dict[str, int]:
+    return dict(_iterations.get() or {})
+
+
+@contextmanager
+def in_iteration(loop: str, iteration: int) -> Iterator[None]:
+    token = _iterations.set({**current_iterations(), loop: iteration})
+    try:
+        yield
+    finally:
+        _iterations.reset(token)

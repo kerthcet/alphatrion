@@ -1,3 +1,4 @@
+import difflib
 import enum
 import json
 import uuid
@@ -7,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+from alphatrion.swarm.formats import Format
 
 
 class Artifact(BaseModel):
@@ -27,6 +30,12 @@ class Artifact(BaseModel):
     created_by: str | None = Field(
         default=None, description="The name of the node that created the artifact."
     )
+    run: str | None = Field(default=None, description="The run that made it.")
+    iteration: dict[str, int] = Field(
+        default_factory=dict,
+        description="Where in the run it was made: each loop's iteration.",
+    )
+    branch: str | None = Field(default=None, description="Its parallel branch.")
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -59,14 +68,17 @@ class Tree:
         parent_id: str | None = None,
         created_by: str | None = None,
         metadata: dict[str, Any] | None = None,
+        **where: Any,
     ) -> Artifact:
-        """Add an unscored artifact. Only an evaluator node scores it."""
+        """Add an unscored artifact. Only an evaluator node scores it. where
+        is the run, iteration and branch it was made in."""
         return self._insert(
             Artifact(
                 parent_id=parent_id,
                 content=content,
                 created_by=created_by,
                 metadata=metadata or {},
+                **where,
             )
         )
 
@@ -133,6 +145,59 @@ class Tree:
             return max(scored, key=lambda a: a.score)
         return min(scored, key=lambda a: a.score)
 
+    def diff(self, artifact_id: str) -> str:
+        """What changed from the artifact's parent, as a unified diff of its
+        files, e.g. a program's edits. The root's diff adds everything."""
+        artifact = self.get(artifact_id)
+        parent = self.parent(artifact_id)
+        before = _files(parent.content) if parent is not None else {}
+        after = _files(artifact.content)
+        lines: list[str] = []
+        for name in sorted(before.keys() | after.keys()):
+            lines += difflib.unified_diff(
+                before.get(name, "").splitlines(keepends=True),
+                after.get(name, "").splitlines(keepends=True),
+                fromfile=f"a/{name}",
+                tofile=f"b/{name}",
+            )
+        return "".join(lines)
+
+    def render(self, mode: ScoreMode = ScoreMode.MAX) -> str:
+        """The tree as text: each artifact under its parent, with its score,
+        or that it's unscored, its description, and how many lines it added
+        and removed from its parent. The best one is marked with a star."""
+        if self.root is None:
+            return ""
+        best = self.best(mode)
+        lines: list[str] = []
+
+        def line(artifact: Artifact) -> str:
+            score = "unscored" if artifact.score is None else f"{artifact.score:.4f}"
+            text = f"{artifact.id[:8]}  {score}  {artifact.metadata.get('description', '')}"
+            if best is not None and artifact.id == best.id:
+                text += " ★"
+            if artifact.parent_id is not None:
+                diff = self.diff(artifact.id).splitlines()
+                added = sum(
+                    1 for d in diff if d.startswith("+") and not d.startswith("+++")
+                )
+                removed = sum(
+                    1 for d in diff if d.startswith("-") and not d.startswith("---")
+                )
+                text += f"  +{added} -{removed}"
+            return text
+
+        def walk(artifact: Artifact, prefix: str) -> None:
+            children = self.children(artifact.id)
+            for i, child in enumerate(children):
+                last = i == len(children) - 1
+                lines.append(f"{prefix}{'└── ' if last else '├── '}{line(child)}")
+                walk(child, prefix + ("    " if last else "│   "))
+
+        lines.append(line(self.root))
+        walk(self.root, "")
+        return "\n".join(lines)
+
     def __len__(self) -> int:
         return len(self._artifacts)
 
@@ -144,18 +209,26 @@ class Tree:
         return iter(self._artifacts.values())
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "artifacts": [
-                a.model_dump(mode="json", fallback=str)
-                for a in self._artifacts.values()
-            ]
-        }
+        artifacts = []
+        for a in self._artifacts.values():
+            record = a.model_dump(mode="json", fallback=str)
+            # Its content's format, e.g. Files, to load it back as one.
+            if isinstance(a.content, Format):
+                record["format"] = type(a.content).__name__
+            artifacts.append(record)
+        return {"artifacts": artifacts}
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Tree":
         tree = cls()
-        for a in data.get("artifacts", []):
-            tree._insert(Artifact.model_validate(a))
+        formats = _formats()
+        for record in data.get("artifacts", []):
+            fields = dict(record)
+            fmt = formats.get(fields.pop("format", None))
+            artifact = Artifact.model_validate(fields)
+            if fmt is not None:
+                artifact.content = fmt.model_validate(artifact.content)
+            tree._insert(artifact)
         return tree
 
     def save(self, path: str | Path) -> None:
@@ -164,3 +237,26 @@ class Tree:
     @classmethod
     def load(cls, path: str | Path) -> "Tree":
         return cls.from_dict(json.loads(Path(path).read_text()))
+
+
+def _files(content: Any) -> dict[str, str]:
+    """An artifact's content as files: its files, or itself as one."""
+    files = getattr(content, "files", None)
+    if isinstance(files, dict):
+        return files
+    return {
+        "content": content
+        if isinstance(content, str)
+        else json.dumps(content, default=str, indent=2)
+    }
+
+
+def _formats() -> dict[str, type[Format]]:
+    """Every format by name, custom ones included, as they subclass Format."""
+    found: dict[str, type[Format]] = {}
+    pending = [Format]
+    while pending:
+        cls = pending.pop()
+        found[cls.__name__] = cls
+        pending.extend(cls.__subclasses__())
+    return found

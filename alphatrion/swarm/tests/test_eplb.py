@@ -92,26 +92,88 @@ async def test_eplb(data):
     )
     assert result.status.value == "completed", result.error
 
-    lines = eplb.attempts(state).splitlines()
-    assert len(lines) == 5
-    assert lines[0].startswith("- combined_score ") and "initial program" in lines[0]
-    assert lines[1].startswith("- combined_score ") and "global policy" in lines[1]
-    assert (
-        lines[2]
-        == "- not applied: the edits change the program outside the evolve block"
+    # Every program in the tree, as the model saw it: the guard rejected the
+    # one editing outside the evolve block, and the one raising scored 0, as
+    # in ADRS. The reply without edits added none.
+    lines = eplb.history(state).splitlines()
+    assert len(lines) == 4
+    assert lines[0].endswith(": initial program") and not lines[0].startswith(
+        "- 0.0000"
     )
-    assert lines[3] == "- rejected, raises: the program failed: boom"
-    assert lines[4].startswith("- not applied: the reply has no edits")
+    assert lines[1].endswith(": global policy") and not lines[1].startswith("- 0.0000")
+    assert lines[2] == "- rejected: outside"
+    assert lines[3] == "- 0.0000: raises"
 
-    # Both scored programs are in the tree, and only the evaluator scored them.
-    scored = [a for a in state.tree if a.score is not None]
-    assert [a.metadata["description"] for a in scored] == [
-        "initial program",
-        "global policy",
+    # Only the evaluators scored, and the best is a program that improved on
+    # nothing worse than the seed.
+    seed, policy = (
+        a
+        for a in state.tree
+        if a.metadata["description"] in ("initial program", "global policy")
+    )
+    assert seed.score > 0 and policy.score > 0
+    assert state.tree.best(ScoreMode.MAX) in (seed, policy)
+    # Each edited program links to the request, and model, it came from.
+    assert policy.metadata["request"] == 1
+    assert state.requests.get(1).model == policy.metadata["model"] == "scripted"
+    assert len(state.requests) == 4
+    # The model saw how every program did.
+    assert "- rejected: outside" in model.requests[-1].messages[0]["content"]
+
+
+def test_an_optimizer_may_change_the_method_but_not_the_judge():
+    from alphatrion.swarm import check_mutation
+
+    original = load_pipeline(EXAMPLE / "pipeline.yaml")
+
+    def changed(change):
+        pipeline = load_pipeline(EXAMPLE / "pipeline.yaml")
+        change({n.name: n for n in [*pipeline.nodes, *pipeline.nodes[2].nodes]})
+        return pipeline
+
+    # The method: more iterations, other models, other instructions.
+    def method(nodes):
+        nodes["evolve"].max_iters = 50
+        nodes["propose"].candidates = nodes["propose"].candidates[:1]
+        nodes["prompt"].params["instructions"] = "${inputs.instructions}"
+
+    check_mutation(original, changed(method))
+
+    # The judge: the guard's checks and the evaluator.
+    def guard(nodes):
+        nodes["guard"].checks = []
+
+    def evaluator(nodes):
+        nodes["evaluate"].fn = "always_one"
+
+    for change, error in [
+        (guard, "guard was changed"),
+        (evaluator, "evaluate was changed"),
+    ]:
+        with pytest.raises(ValueError, match=error):
+            check_mutation(original, changed(change))
+
+
+@pytest.mark.asyncio
+async def test_a_continued_experiment_keeps_one_seed(data, tmp_path):
+    from alphatrion.swarm import HostStore
+
+    store = HostStore(tmp_path / "experiments", experiment="eplb")
+    inputs = {"data": str(data), "instructions": str(EXAMPLE / "proposer.md")}
+    for _ in range(2):
+        pipeline = load_pipeline(EXAMPLE / "pipeline.yaml")
+        next(n for n in pipeline.nodes if n.name == "evolve").max_iters = 1
+        model = ScriptedModel(
+            [edit("if num_groups % num_nodes == 0:", "if False:", "global")]
+        )
+        propose = next(n for n in pipeline.nodes[2].nodes if n.name == "propose")
+        propose.candidates = [Candidate(model="scripted", provider="model")]
+        graph = build_graph(pipeline, functions={**eplb.FUNCTIONS, "model": model})
+        result = await graph.run(state=store.load(), inputs=inputs, store=store)
+        assert result.status.value == "completed", result.error
+    roots = [
+        a
+        for a in store.load().tree
+        if a.metadata.get("description") == "initial program"
     ]
-    assert all(a.score > 0 for a in scored)
-    assert state.tree.best(ScoreMode.MAX) in scored
-    # The rejected program stays in the tree, unscored.
-    assert len(state.tree) == 3
-    # The model saw every attempt so far.
-    assert "boom" in model.requests[-1].messages[0]["content"]
+    assert len(roots) == 1

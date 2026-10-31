@@ -68,11 +68,22 @@ async def test_fallback_on_errors_and_refusals():
         result = await build(client, [router(policy="fallback")]).run()
 
         assert result.status == GraphStatus.COMPLETED
-        # The router outputs the ModelResponse for the node after it.
-        assert result.output == ModelResponse(text="reply from b", model="b")
+        # The router outputs the ModelResponse, which carries its request's
+        # number.
+        assert result.output == ModelResponse(
+            text="reply from b", model="b", metadata={"request": 2}
+        )
         entry = result.state.memory.history(node="ask")[0]
         assert entry.data["details"] == [str(failure)]
         assert [model for model, _, _ in client.requests] == ["a", "b"]
+        # Every attempt is in the state's requests, in order.
+        requests = list(result.state.requests)
+        assert [(r.number, r.model, r.error) for r in requests] == [
+            (1, "a", str(failure)),
+            (2, "b", None),
+        ]
+        assert requests[1].response.text == "reply from b"
+        assert requests[0].node == "ask"
 
 
 @pytest.mark.asyncio
@@ -84,7 +95,7 @@ async def test_every_candidate_failing():
     assert result.status == GraphStatus.FAILED
     assert "every candidate failed" in result.error
 
-    # With it, the node chooses error, without an output, and the branch
+    # With it, the node chooses failed, without an output, and the branch
     # can still reference the request before it.
     seen = []
 
@@ -97,7 +108,9 @@ async def test_every_candidate_failing():
         "fn": "recover",
         "params": {"request": "${nodes.prompt.output}"},
     }
-    graph = build(client, [router(branches={"error": [recover_node]})], recover=recover)
+    graph = build(
+        client, [router(branches={"failed": [recover_node]})], recover=recover
+    )
     result = await graph.run()
     assert result.status == GraphStatus.COMPLETED
     assert seen == ["hello"]
@@ -292,3 +305,53 @@ async def test_openai_client():
     )
     with pytest.raises(ModelError):
         await client.complete("llama-4", REQUEST, 64, {})
+
+
+@pytest.mark.asyncio
+async def test_a_mistake_fails_the_router_even_if_failed_is_handled():
+    class Broken:
+        async def complete(self, model, request, max_tokens, options):
+            raise TypeError("no credentials")
+
+    # failed is for models failing, so a mistake isn't retried silently.
+    graph = build(Broken(), [router(exit={"failed": "end"})])
+    result = await graph.run()
+    assert result.status == GraphStatus.FAILED
+    assert "TypeError: no credentials" in result.error
+    # The attempt is recorded all the same.
+    (record,) = result.state.requests
+    assert record.error == "TypeError: no credentials"
+
+
+def test_bedrock_ids_use_bedrock():
+    graph = build(
+        None,
+        [
+            router(
+                candidates=[
+                    {"model": "us.anthropic.claude-opus-5-5"},
+                    {"model": "anthropic.claude-sonnet-5-5", "region": "eu-west-1"},
+                    {"model": "claude-opus-5-5"},
+                ]
+            )
+        ],
+    )
+    node = graph.nodes["ask"]
+    assert [c.provider_name for c in node.candidates] == [
+        "bedrock",
+        "bedrock",
+        "anthropic",
+    ]
+    # Built from the AWS environment, without an Anthropic API key.
+    from alphatrion.swarm.providers.anthropic import BedrockClient
+
+    assert isinstance(node._client(0), BedrockClient)
+    assert node._client(1)._client.aws_region == "eu-west-1"
+
+
+def test_claude_needs_an_api_key(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    graph = build(None, [router(candidates=[{"model": "claude-opus-5-5"}])])
+    with pytest.raises(RuntimeError, match="claude-opus-5-5 needs an API key"):
+        graph.nodes["ask"]._client(0)

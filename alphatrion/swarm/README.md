@@ -40,7 +40,7 @@ pip install alphatrion[all]
   - `condition` - Chooses `true` or `false` by a function that returns a bool.
   - `switch` - Chooses by a function that returns the name of a case, e.g. which job to run next. The cases are the keys of its `branches` and `exit`; a case without a branch or an exit fails the node, unless a `default` key catches it. An empty case, like `idle: []`, does nothing and continues.
   - `evaluator` - Measures, e.g. the `Execution` its params reference, outputs `Metrics`, and records the primary score on the current artifact.
-  - `model_router` - Sends the `ModelRequest` its `request` param references to one of several candidate models, and outputs the `ModelResponse`. A candidate's `options` are extra settings for its model's API, passed as is, like `{output_config: {effort: high}}`. The `weighted` policy picks candidates by weight, and `fallback` tries them in order; a failed attempt, e.g. a timeout or a refusal, moves on to the next candidate. It chooses `ok`, or to `error` when every candidate failed, if handled, and fails otherwise. Claude models (`claude-*`) use the Anthropic API, `pip install alphatrion[anthropic]`, and other models any OpenAI-compatible API, with `base_url`:
+  - `model_router` - Sends the `ModelRequest` its `request` param references to one of several candidate models, and outputs the `ModelResponse`. A candidate's `options` are extra settings for its model's API, passed as is, like `{output_config: {effort: high}}`. The `weighted` policy picks candidates by weight, and `fallback` tries them in order; a failed attempt, e.g. a timeout or a refusal, moves on to the next candidate. It chooses `ok`, or to `error` when every candidate failed, if handled, and fails otherwise. Claude models use the Anthropic API for `claude-*` ids, with `ANTHROPIC_API_KEY`, or AWS Bedrock for Bedrock's ids, like `us.anthropic.claude-opus-5-5`, with the AWS credentials of the environment and `AWS_REGION`, or a candidate's `region`; both need `pip install alphatrion[anthropic]`. Other models use any OpenAI-compatible API, with `base_url`:
 
     ```yaml
     - name: prompt
@@ -88,7 +88,30 @@ pip install alphatrion[all]
 
   A type names how a runtime runs, not where: the built-in ones are `microsandbox`, hardware-isolated microVMs (`pip install microsandbox`), on this machine or on microsandbox's cloud with `MSB_BACKEND=cloud` and `MSB_API_KEY`, and `host`, processes on this machine without isolation, for development and tests. Mounts bind directories of this machine, so they work on a local microVM but not yet on the cloud. Other backends, e.g. Docker or Kubernetes, subclass `Backend`. The runtimes are part of the fixed root: self-improvement can't change them.
 - **Mutability** - Self-improvement may change a node only if it has `mutable: true`; nodes are immutable by default. An immutable node stays as written, its capabilities and nested nodes included, and a mutable one, like a loop, can change around the immutable nodes inside it, but never gain capabilities, loosen its timeout or retries, or change its runtime. Evaluators and guardrails are always immutable, since they judge what counts as an improvement. `check_mutation(original, mutated)` checks a changed pipeline against this, and that no node with `score` was added.
-- **Tree** - Records how the artifact evolved. Each artifact derives from its parent, so a graph can branch to explore several variants and backtrack to the best one.
+- **Tree** - Records how the artifact evolved. Each artifact derives from its parent, so a graph can branch to explore several variants and backtrack to the best one. `tree.render()` shows it as code evolving: each artifact under the one it came from, with its score and how many lines it changed, the best marked with a star, and `tree.diff(id)` what an artifact changed from its parent, as a unified diff.
+- **Tracing** - Every graph run, node attempt and model request is an OpenTelemetry span, with [OpenInference](https://github.com/Arize-ai/openinference)'s conventions, so a model request nests under the node and the run that sent it. A model request is an LLM span with the model, the request, the response and its tokens, whatever the client, and its number in the run. `tracing.setup()` sends the spans to exporters: `HostExporter(path)` for a file of JSON lines on this machine, `DatabaseExporter(path)` for SQLite, with the model and node as columns to query, or any OpenTelemetry exporter, e.g. OTLP to Phoenix, Langfuse or Jaeger. `instrument=True` also traces the Anthropic and OpenAI SDKs themselves, with OpenInference's instrumentors. Without `setup()`, spans go to the application's OpenTelemetry provider, if it has one.
+
+    ```python
+    from alphatrion.swarm import tracing
+
+    tracing.setup(tracing.HostExporter("traces.jsonl"))
+    ```
+
+  The run itself keeps its requests in `state.requests`, in order, e.g. to check that a router's weights pick the models they should with `state.requests.counts()`. Every attempt is kept, fallbacks included, and a response carries its request's number in `metadata["request"]`, so what it leads to, like an artifact, can link back to it.
+- **Experiments and runs** - An experiment is a goal and its judge, improved over runs: it owns the tree of artifacts, the memory and every evaluation's metrics. A run is one execution of a pipeline on it, owning its status, inputs, the pipeline it ran, its requests and its traces. Anything finer, a loop's iteration or a parallel branch, is recorded on what happened in it, e.g. an artifact's `iteration: {research: 4}`, not a level of its own. `graph.run(store=HostStore("experiments", experiment="eplb"))` keeps them on this machine, as the run happens:
+
+    ```
+    experiments/eplb/
+      experiment.json, tree.json, tree.txt, memory.json, state.json
+      artifacts/<id>/        each artifact's files, and diff.patch from its parent
+      metrics.jsonl          every evaluation, with its run and iteration
+      runs/<run-id>/         run.json (status, inputs fingerprinted, parent), pipeline.txt,
+                             requests.jsonl, traces.jsonl with tracing.setup(store.spans())
+    ```
+
+  `python -m alphatrion.swarm.show experiments/eplb` shows an experiment in the terminal: its best score, a chart of every evaluation and the best so far, and the tree of artifacts; given an artifact's id, or its start, it shows that artifact's metrics and diff. It reads what the experiment checkpointed, so it works while a run is going.
+
+  `store.load()` returns the experiment's state, to continue it with another run, and `checkpoint_every` saves it every that many iterations of a loop. A run started to evaluate another experiment's artifact, e.g. a pipeline an optimizer proposed, names it with `parent`. Other stores, e.g. for a database, subclass `RunStore`.
 - **Memory** - Shared by all nodes: a history of every node execution, plus a key-value store. Memory and the tree can be saved and loaded to continue across runs.
 - **State** - Passed to every node, bundling the memory, the tree and the current artifact, which nodes move with `commit()` and `checkout()`. It outlives a run, so a run can continue from it, while inputs belong to each run: `graph.run(state=state, inputs={...})`.
 

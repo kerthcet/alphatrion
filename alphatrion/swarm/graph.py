@@ -1,25 +1,38 @@
 import asyncio
 import contextlib
 import enum
+import logging
 import re
+import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+from opentelemetry import trace
 from pydantic import BaseModel, ConfigDict
 
+from alphatrion.swarm import tracing
 from alphatrion.swarm.context import (
     current_inputs,
+    current_iterations,
     output_scope,
     run_inputs,
     using_runtime,
+    using_store,
 )
-from alphatrion.swarm.formats import check_value, describe, unify
+from alphatrion.swarm.formats import (
+    Metrics,
+    ModelResponse,
+    check_value,
+    describe,
+    unify,
+)
 from alphatrion.swarm.nodes import Node, NodeResult
 from alphatrion.swarm.nodes.base import NO_OUTPUT, Choice
 from alphatrion.swarm.runtimes import Runtime
 from alphatrion.swarm.state import State
+from alphatrion.swarm.store import RunStore
 
 # Exits, the targets of edges that leave a graph. end finishes the current
 # run and raise fails it, from anywhere inside it. A run is the top graph,
@@ -313,6 +326,7 @@ class Graph:
         self,
         state: State | None = None,
         inputs: dict[str, Any] | None = None,
+        store: RunStore | None = None,
     ) -> GraphResult:
         """
         Run the graph. Pass a state to continue from an existing memory and
@@ -320,7 +334,8 @@ class Graph:
         a data directory, which nodes reference as ${inputs.name}. A nested
         run, e.g. a loop body, keeps the inputs of the run it's part of, and
         sees the outputs before it. The result's output is the run's last
-        output.
+        output. A store, e.g. HostStore("runs"), keeps the run: its
+        artifacts, metrics, requests, tree and memory.
         """
         self.validate()
         if state is None:
@@ -334,8 +349,28 @@ class Graph:
                     path=[],
                     error=f"The run is missing inputs: {', '.join(sorted(missing))}",
                 )
-            with output_scope() as outputs:
-                return await self._run(state, outputs)
+            if store is not None:
+                store.start(self, given)
+                # A continued state's artifacts are kept too.
+                for artifact in state.tree:
+                    store.artifact(artifact, state.tree)
+                with using_store(store):
+                    result = await self.run(state=state)
+                store.finish(result, state)
+                return result
+            with (
+                output_scope() as outputs,
+                tracing.tracer().start_as_current_span(f"run {self.name}") as span,
+            ):
+                span.set_attribute(tracing.KIND, tracing.CHAIN)
+                span.set_attribute("swarm.graph", self.name)
+                if state.branch is not None:
+                    span.set_attribute("swarm.branch", state.branch)
+                result = await self._run(state, outputs)
+                span.set_attribute("swarm.status", result.status.value)
+                if result.error:
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, result.error))
+                return result
 
     async def _run(self, state: State, outputs: dict[str, Any]) -> GraphResult:
         path: list[str] = []
@@ -348,7 +383,9 @@ class Graph:
             path.append(node.name)
 
             try:
+                started = time.monotonic()
                 result = await self._execute(node, state)
+                _log_step(state, result, time.monotonic() - started)
                 # A node has an output only with the choices it outputs on, checked against
                 # its format, which the nodes referencing it were checked
                 # against when the graph was built.
@@ -429,23 +466,42 @@ class Graph:
         start = state.current_id
         for attempt in range(1, node.retries + 2):
             limit = None
-            try:
-                async with self._runtime(node):
-                    async with asyncio.timeout(node.timeout) as limit:
-                        return await node.call(state)
-            except Choice as choice:
-                # A choice the node's function chose: an outcome, not retried.
-                return NodeResult(choice=choice.choice, details=choice.details)
-            except Exception as e:
-                if (
-                    isinstance(e, TimeoutError)
-                    and limit is not None
-                    and limit.expired()
-                ):
-                    failure, details = TIMEOUT, f"timed out after {node.timeout:g}s"
-                else:
-                    failure, details = ERROR, f"{type(e).__name__}: {e}"
-                last = e
+            with tracing.tracer().start_as_current_span(f"node {state.node}") as span:
+                span.set_attribute(tracing.KIND, tracing.CHAIN)
+                span.set_attribute("swarm.node", state.node)
+                span.set_attribute("swarm.node.type", node.type)
+                span.set_attribute("swarm.attempt", attempt)
+                for loop, iteration in current_iterations().items():
+                    span.set_attribute(f"swarm.iteration.{loop}", iteration)
+                if state.branch is not None:
+                    span.set_attribute("swarm.branch", state.branch)
+                try:
+                    async with self._runtime(node):
+                        async with asyncio.timeout(node.timeout) as limit:
+                            result = await node.call(state)
+                    if result.choice is not None:
+                        span.set_attribute("swarm.choice", result.choice)
+                    return result
+                except Choice as choice:
+                    # A choice the node's function made: an outcome, not
+                    # retried.
+                    span.set_attribute("swarm.choice", choice.choice)
+                    return NodeResult(choice=choice.choice, details=choice.details)
+                except Exception as e:
+                    if (
+                        isinstance(e, TimeoutError)
+                        and limit is not None
+                        and limit.expired()
+                    ):
+                        failure, details = (
+                            TIMEOUT,
+                            f"timed out after {node.timeout:g}s",
+                        )
+                    else:
+                        failure, details = ERROR, f"{type(e).__name__}: {e}"
+                    last = e
+                    span.set_attribute("swarm.choice", failure)
+                    span.set_status(trace.Status(trace.StatusCode.ERROR, details))
             # An attempt that committed is abandoned: its artifacts stay in
             # the tree, but the next attempt starts from the same one.
             state.current_id = start
@@ -488,6 +544,9 @@ class Graph:
     def _record(self, state: State, node: Node, data: dict[str, Any]) -> None:
         if state.branch is not None:
             data["branch"] = state.branch
+        iterations = current_iterations()
+        if iterations:
+            data["iteration"] = iterations
         state.memory.record(state.step, self._qualified(node), node.type, data)
 
 
@@ -504,3 +563,31 @@ async def _close(runtime: Runtime) -> None:
 
 def _name(fmt: Any) -> str:
     return "any" if fmt is Any else describe(fmt)
+
+
+# Each node that ran, at INFO, e.g. to follow a long run as it goes.
+logger = logging.getLogger("alphatrion.swarm")
+
+
+def _log_step(state: State, result: NodeResult, seconds: float) -> None:
+    if not logger.isEnabledFor(logging.INFO):
+        return
+    where = " ".join(f"{loop} {i}" for loop, i in current_iterations().items())
+    output = result.output
+    if isinstance(output, Metrics):
+        detail = f"{output.primary} {output.score:.4f}"
+    elif isinstance(output, ModelResponse):
+        detail = f"{output.model}, {output.output_tokens or '?'} tokens"
+    elif result.choice is not None:
+        detail = result.choice
+        if result.details not in (None, "", []):
+            detail += f": {str(result.details).splitlines()[0][:120]}"
+    else:
+        detail = ""
+    logger.info(
+        "%s%-10s %6.1fs  %s",
+        f"[{where}] " if where else "",
+        state.node,
+        seconds,
+        detail,
+    )

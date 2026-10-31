@@ -126,7 +126,11 @@ async def experiment(
     commit = git(workdir, "rev-parse", "--short", "HEAD")
     state.commit(
         Files(files={TRAIN: code}, metadata={"model": reply.model}),
-        metadata={"commit": commit, "description": description},
+        metadata={
+            "commit": commit,
+            "description": description,
+            "request": reply.metadata.get("request"),
+        },
     )
     run = await train(state, command, train_timeout)
     if crashed(run):

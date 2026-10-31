@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 from pydantic import Field, PrivateAttr
 
 from alphatrion.swarm.capabilities import Capability
+from alphatrion.swarm.context import current_store
 from alphatrion.swarm.formats import Metrics
 from alphatrion.swarm.nodes.base import FnIO, FnRef, Node, NodeResult
 from alphatrion.swarm.state import State
@@ -43,4 +44,7 @@ class EvaluatorNode(Node):
         if not isinstance(metrics, Metrics):
             metrics = Metrics(values={"score": float(metrics)}, primary="score")
         state.tree._set_score(artifact.id, metrics.score)
+        store = current_store()
+        if store is not None:
+            store.metrics(state, state.node or self.name, artifact.id, metrics)
         return NodeResult(output=metrics)
