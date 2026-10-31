@@ -1,8 +1,8 @@
 import enum
-from collections.abc import Iterator, Mapping
-from types import MappingProxyType
+from collections.abc import Iterator
 from typing import Any
 
+from alphatrion.swarm.context import current_runtime
 from alphatrion.swarm.memory import Memory, MemoryEntry
 from alphatrion.swarm.state import State
 from alphatrion.swarm.tree import Artifact, ScoreMode, Tree
@@ -120,8 +120,15 @@ class StateView:
         self.memory = MemoryView(state, granted)
 
     @property
-    def inputs(self) -> Mapping[str, Any]:
-        return MappingProxyType(self._state.inputs)
+    def runtime(self) -> Any:
+        """The runtime the node runs in, e.g. to exec a command in it."""
+        runtime = current_runtime()
+        if runtime is None:
+            raise RuntimeError(
+                f"Node {self._state.node} has no runtime: give it one with "
+                "runtime: in the pipeline"
+            )
+        return runtime
 
     @property
     def current(self) -> Artifact | None:

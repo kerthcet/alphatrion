@@ -161,12 +161,15 @@ def test_guardrail_requires_fail_edge():
 
 @pytest.mark.asyncio
 async def test_async_nodes_and_custom_route():
-    async def classify(state: State):
-        return NodeResult(route=state.inputs["kind"])
+    # kind is an input of the run, which classify gets as a param.
+    async def classify(state: State, kind: str):
+        return NodeResult(route=kind)
 
     graph = (
-        Graph()
-        .add_node(ActionNode(name="classify", fn=classify))
+        Graph(inputs={"kind"})
+        .add_node(
+            ActionNode(name="classify", fn=classify, params={"kind": "${inputs.kind}"})
+        )
         .add_node(ActionNode(name="small", fn=lambda state: "small"))
         .add_node(ActionNode(name="large", fn=lambda state: "large"))
         .add_edge("classify", "small", when="small")

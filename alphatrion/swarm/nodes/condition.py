@@ -25,13 +25,13 @@ class ConditionNode(DecisionNode):
     _fn: FnIO = PrivateAttr()
 
     def _prepare(self, builder: "Builder") -> None:
-        self._fn = FnIO(builder.resolve(self.fn), self)
+        self._fn = FnIO(builder.resolve(self.fn), self, builder)
 
     def input_type(self) -> Any:
         return self._fn.input_type
 
     async def decide(self, state: State, value: Any) -> tuple[str, Any]:
-        result = await self._fn(state, value, **self.params)
+        result = await self._fn(state, value)
         if not isinstance(result, bool):
             raise TypeError(
                 f"Condition {self.name} must return a bool, got {type(result).__name__}"

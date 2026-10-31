@@ -30,7 +30,7 @@ class EvaluatorNode(Node):
     _fn: FnIO = PrivateAttr()
 
     def _prepare(self, builder: "Builder") -> None:
-        self._fn = FnIO(builder.resolve(self.fn), self)
+        self._fn = FnIO(builder.resolve(self.fn), self, builder)
 
     def input_type(self) -> Any:
         return self._fn.input_type
@@ -42,7 +42,7 @@ class EvaluatorNode(Node):
         artifact = state.current
         if artifact is None:
             raise RuntimeError(f"Evaluator {self.name} requires a current artifact")
-        metrics = await self._fn(state, value, **self.params)
+        metrics = await self._fn(state, value)
         if not isinstance(metrics, Metrics):
             metrics = Metrics(values={"score": float(metrics)}, primary="score")
         state.tree._set_score(artifact.id, metrics.score)

@@ -36,7 +36,7 @@ class GuardrailNode(DecisionNode):
     _checks: list[FnIO] = PrivateAttr()
 
     def _prepare(self, builder: "Builder") -> None:
-        self._checks = [FnIO(builder.resolve(c), self) for c in self.checks]
+        self._checks = [FnIO(builder.resolve(c), self, builder) for c in self.checks]
 
     def input_type(self) -> Any:
         # The format the checks agree on, Any if they take different ones.
@@ -50,7 +50,7 @@ class GuardrailNode(DecisionNode):
     async def decide(self, state: State, value: Any) -> tuple[str, Any]:
         reasons = []
         for check in self._checks:
-            result = await check(state, value, **self.params)
+            result = await check(state, value)
             passed, reason = result if isinstance(result, tuple) else (result, None)
             if not passed:
                 reasons.append(reason or getattr(check.fn, "__name__", repr(check.fn)))

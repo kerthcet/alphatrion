@@ -8,7 +8,6 @@ class State:
     """
     The state passed to every node of a graph run. It bundles:
 
-    - inputs: the read-only inputs of the run.
     - memory: the history and the key-value store shared by the nodes.
     - tree: the tree of artifacts, plus a pointer to the current artifact,
       which nodes move with commit() and checkout(), like a git HEAD.
@@ -16,12 +15,10 @@ class State:
 
     def __init__(
         self,
-        inputs: dict[str, Any] | None = None,
         memory: Memory | None = None,
         tree: Tree | None = None,
         current_id: str | None = None,
     ):
-        self.inputs: dict[str, Any] = dict(inputs or {})
         self.memory = memory if memory is not None else Memory()
         self.tree = tree if tree is not None else Tree()
         if current_id is not None:
@@ -61,16 +58,13 @@ class State:
         return artifact
 
     def fork(self, branch: str) -> "State":
-        """Create the state of a parallel branch. It shares the inputs, the
-        memory and the tree, but has its own current artifact and step, so
+        """Create the state of a parallel branch. It shares the memory and
+        the tree, but has its own current artifact and step, so
         branches can evolve the artifact independently."""
         state = State(
-            inputs=self.inputs,
             memory=self.memory,
             tree=self.tree,
             current_id=self.current_id,
         )
-        # Share the inputs dict itself rather than a copy.
-        state.inputs = self.inputs
         state.branch = f"{self.branch}/{branch}" if self.branch else branch
         return state

@@ -56,7 +56,7 @@ class LoopNode(Node):
             self.name, self.nodes, exits={CONTINUE, BREAK, NEXT}, after=NEXT
         )
         if self.until is not None:
-            self._until = FnIO(builder.resolve(self.until), self)
+            self._until = FnIO(builder.resolve(self.until), self, builder)
 
         # Each iteration's output is the next one's input, so it must have
         # the format the body takes.
@@ -104,9 +104,7 @@ class LoopNode(Node):
             # with, e.g. to drop a candidate that didn't improve.
             if result.exit == NEXT:
                 value = result.output
-            if self._until is not None and await self._until(
-                state, value, **self.params
-            ):
+            if self._until is not None and await self._until(state, value):
                 return NodeResult(route=self.COMPLETED, output=value, details=details)
         return NodeResult(
             route=self.MAX_ITERS, output=value, details={"iterations": iterations}

@@ -308,7 +308,11 @@ async def test_custom_type(tmp_path):
                     "fn": "builtins:bool",
                     "branches": {
                         "maybe": [
-                            {"name": "a", "type": "action", "fn": "builtins:print"}
+                            {
+                                "name": "a",
+                                "type": "action",
+                                "fn": "builtins:print",
+                            }
                         ]
                     },
                 }
@@ -328,7 +332,14 @@ async def test_custom_type(tmp_path):
         ),
         # Every type only accepts its own fields.
         (
-            [{"name": "a", "type": "action", "fn": "builtins:print", "max_iters": 5}],
+            [
+                {
+                    "name": "a",
+                    "type": "action",
+                    "fn": "builtins:print",
+                    "max_iters": 5,
+                }
+            ],
             ValueError,
         ),
         ([{"name": "a", "type": "action"}], ValueError),
@@ -337,12 +348,26 @@ async def test_custom_type(tmp_path):
         ([{"name": "a", "type": "guardrail", "checks": ["builtins:bool"]}], ValueError),
         # continue and break only make sense in a loop.
         (
-            [{"name": "a", "type": "action", "fn": "builtins:print", "exit": "break"}],
+            [
+                {
+                    "name": "a",
+                    "type": "action",
+                    "fn": "builtins:print",
+                    "exit": "break",
+                }
+            ],
             ValueError,
         ),
         # exit only takes exits, there is no goto.
         (
-            [{"name": "a", "type": "action", "fn": "builtins:print", "exit": "x"}],
+            [
+                {
+                    "name": "a",
+                    "type": "action",
+                    "fn": "builtins:print",
+                    "exit": "x",
+                }
+            ],
             ValueError,
         ),
         # A route can't both exit and branch.
@@ -355,7 +380,11 @@ async def test_custom_type(tmp_path):
                     "exit": {"true": "end"},
                     "branches": {
                         "true": [
-                            {"name": "b", "type": "action", "fn": "builtins:print"}
+                            {
+                                "name": "b",
+                                "type": "action",
+                                "fn": "builtins:print",
+                            }
                         ]
                     },
                 }
@@ -371,7 +400,11 @@ async def test_custom_type(tmp_path):
                     "fn": "builtins:bool",
                     "branches": {
                         "true": [
-                            {"name": "a", "type": "action", "fn": "builtins:print"}
+                            {
+                                "name": "a",
+                                "type": "action",
+                                "fn": "builtins:print",
+                            }
                         ]
                     },
                 }
@@ -402,7 +435,12 @@ async def test_custom_type(tmp_path):
         (
             [
                 {"name": "a", "type": "action", "fn": "builtins:print"},
-                {"name": "b", "type": "action", "fn": "builtins:print", "exit": "a"},
+                {
+                    "name": "b",
+                    "type": "action",
+                    "fn": "builtins:print",
+                    "exit": "a",
+                },
             ],
             ValueError,
         ),

@@ -28,4 +28,5 @@ Real self-improvement systems built as pipelines. They need real hardware or cre
 
 | Case | What it improves |
 |---|---|
+| [eplb](./cases/eplb) | [ADRS's eplb example](https://github.com/UCB-ADRS/ADRS/tree/main/openevolve/examples/ADRS/eplb): a model evolves vLLM's expert parallelism load balancer, scored by ADRS's evaluator on a recorded expert-load trace for balance and speed. It runs on CPU, with torch and an Anthropic API key. |
 | [autoresearch](./cases/autoresearch) | [karpathy/autoresearch](https://github.com/karpathy/autoresearch): a model proposes edits to `train.py`, each trains for 5 minutes, and an edit is kept only if `val_bpb` improved. It needs an NVIDIA GPU, e.g. an H100, and an Anthropic API key. |

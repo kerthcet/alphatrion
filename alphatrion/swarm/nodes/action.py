@@ -16,7 +16,8 @@ class ActionNode(Node):
     fn(state, **params) if fn doesn't take it, e.g. to build a model request
     or apply a model's edit. Its return value is the output, and its
     annotations are the input and output formats. fn can also return a
-    NodeResult to choose the route itself.
+    NodeResult to choose the route itself, e.g. NodeResult(route="skip") for
+    an exit like `exit: {skip: continue}`.
     """
 
     CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
@@ -33,16 +34,17 @@ class ActionNode(Node):
     _fn: FnIO = PrivateAttr()
 
     def _prepare(self, builder: "Builder") -> None:
-        self._fn = FnIO(builder.resolve(self.fn), self)
+        self._fn = FnIO(builder.resolve(self.fn), self, builder)
 
     def input_type(self) -> Any:
         return self._fn.input_type
 
     def output_type(self, route: str | None = None, received: Any = Any) -> Any:
-        return self._fn.output_type
+        # A route the function chose outputs what it returned with it.
+        return self._fn.output_type if route is None else Any
 
     async def run(self, state: State, value: Any) -> NodeResult:
-        result = await self._fn(state, value, **self.params)
+        result = await self._fn(state, value)
         if isinstance(result, NodeResult):
             return result
         return NodeResult(output=result)

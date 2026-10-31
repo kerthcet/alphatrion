@@ -1,35 +1,42 @@
 # autoresearch (https://github.com/karpathy/autoresearch) as a pipeline: a
 # model proposes an edit to train.py, it trains for 5 minutes, and the edit
 # is kept if val_bpb improved, else reverted. The comments show the formats
-# flowing between the nodes, which the pipeline checks connect. Only the
-# evaluator nodes score: the code being improved never judges itself.
+# flowing between the nodes. Only the evaluator nodes score: the code being
+# improved never judges itself.
 name: autoresearch
+params:
+  command: uv run train.py
+  train_timeout: 600            # kill runs after 10 minutes, as crashed
+inputs:
+  - workdir                     # the autoresearch checkout
+  - instructions                # the instructions for the model, proposer.md
+runtimes:
+  train:                        # where train.py runs
+    type: host                  # it needs the GPU; a kubernetes backend can run it remotely
+    mounts:
+      - {path: /repo, source: "${inputs.workdir}", readonly: false}
 nodes:
-  - name: baseline              # -> Files: train.py as the root artifact
+  - name: baseline              # -> Execution: train.py as the root, trained once
     type: action
     fn: baseline
-  - name: train_baseline        # Files -> Execution
-    type: action
-    fn: train
-    params: &train
-      command: uv run train.py
-      timeout: 600              # kill runs after 10 minutes
-  - name: baseline_ran          # a crashed baseline fails the run
-    type: guardrail
-    checks: [ran]
-    exit: {fail: raise}
+    params:
+      workdir: ${inputs.workdir}
+      command: ${params.command}
+      train_timeout: ${params.train_timeout}
+    runtime: train
+    exit: {crashed: raise}
   - name: score_baseline        # Execution -> Metrics
     type: evaluator
     fn: measure
-  - name: keep_baseline         # Metrics -> Files
-    type: action
-    fn: keep
-  - name: research              # Files -> Files, until stopped
+  - name: research              # until stopped
     type: loop
     nodes:
-      - name: prompt            # Files -> ModelRequest
+      - name: prompt            # -> ModelRequest: proposer.md, train.py and the results so far
         type: action
-        fn: propose_prompt
+        fn: prompt
+        params:
+          instructions: ${inputs.instructions}
+          workdir: ${inputs.workdir}
       - name: propose           # ModelRequest -> ModelResponse
         type: model_router
         max_tokens: 32000       # room for thinking and the edits; streamed
@@ -37,32 +44,20 @@ nodes:
           - {model: claude-opus-5-5, weight: 0.5, params: {output_config: {effort: high}}}
           - {model: claude-sonnet-5-5, weight: 0.5, params: {output_config: {effort: high}}}
         exit: {error: continue} # every model failed: try again
-      - name: edits_apply       # edits that don't apply: nothing to try
-        type: guardrail
-        checks: [edits_apply]
-        exit: {fail: continue}
-      - name: apply             # ModelResponse -> Files: edit and commit
+      - name: experiment        # ModelResponse -> Execution: edit, commit and train
         type: action
-        fn: apply
-      - name: train             # Files -> Execution
-        type: action
-        fn: train
-        params: *train
-      - name: ran
-        type: guardrail
-        checks: [ran]
-        branches:
-          fail:
-            - {name: crash, type: action, fn: crash, exit: continue}
-      - name: evaluate          # Execution -> Metrics: scores the artifact
+        fn: experiment
+        params:
+          workdir: ${inputs.workdir}
+          command: ${params.command}
+          train_timeout: ${params.train_timeout}
+        runtime: train
+        exit: {skip: continue, crashed: continue}
+      - name: evaluate          # Execution -> Metrics: scores the experiment
         type: evaluator
         fn: measure
-      - name: improved
-        type: condition
-        fn: improved
-        branches:
-          false:
-            - {name: discard, type: action, fn: discard, exit: continue}
-      - name: keep              # Metrics -> Files
+      - name: settle            # Metrics -> Files: keep it if val_bpb improved, else revert
         type: action
-        fn: keep
+        fn: settle
+        params:
+          workdir: ${inputs.workdir}

@@ -43,13 +43,13 @@ class SwitchNode(DecisionNode):
         )
 
     def _prepare(self, builder: "Builder") -> None:
-        self._fn = FnIO(builder.resolve(self.fn), self)
+        self._fn = FnIO(builder.resolve(self.fn), self, builder)
 
     def input_type(self) -> Any:
         return self._fn.input_type
 
     async def decide(self, state: State, value: Any) -> tuple[str, Any]:
-        case = await self._fn(state, value, **self.params)
+        case = await self._fn(state, value)
         if not isinstance(case, str):
             raise TypeError(
                 f"Switch {self.name} must return a str, got {type(case).__name__}"

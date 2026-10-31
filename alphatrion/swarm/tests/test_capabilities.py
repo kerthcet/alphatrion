@@ -27,10 +27,6 @@ def score_directly(state):
     state.tree._set_score(state.current_id, 1.0)
 
 
-def write_inputs(state):
-    state.inputs["task"] = "other"
-
-
 def commits(state, value) -> bool:
     state.commit("v2")
     return True
@@ -50,13 +46,12 @@ async def run(nodes):
                 remember,
                 add_to_tree,
                 score_directly,
-                write_inputs,
                 commits,
                 score,
             )
         },
     )
-    return await graph.run(inputs={"task": "t"})
+    return await graph.run()
 
 
 def test_types_declare_their_capabilities():
@@ -148,7 +143,6 @@ async def test_evaluators_only_score_what_they_measure():
     [
         ("add_to_tree", "AttributeError"),
         ("score_directly", "AttributeError"),
-        ("write_inputs", "TypeError"),
     ],
 )
 async def test_functions_cannot_bypass_the_view(fn, error):
@@ -162,7 +156,6 @@ async def test_functions_cannot_bypass_the_view(fn, error):
     assert result.error.startswith(error)
     assert len(result.state.tree) == 1
     assert result.state.current.score is None
-    assert result.state.inputs["task"] == "t"
 
 
 def test_mutation_cannot_gain_capabilities():

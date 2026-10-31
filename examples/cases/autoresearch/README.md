@@ -3,21 +3,15 @@
 [autoresearch](https://github.com/karpathy/autoresearch) as a pipeline: a model proposes an edit to `train.py`, it trains for a fixed 5 minutes, and the edit is kept if `val_bpb` improved, else reverted. It runs until stopped.
 
 ```yaml
-- baseline          # -> Files: train.py as the root artifact
-- train_baseline    # Files -> Execution
-- baseline_ran      # guardrail: a crashed baseline fails the run
+- baseline          # -> Execution: train.py as the root, trained once; a crash fails the run
 - score_baseline    # evaluator: Execution -> Metrics
-- keep_baseline     # Metrics -> Files
-- research          # loop, Files -> Files
-    - prompt        # Files -> ModelRequest: proposer.md, train.py and the results so far
+- research          # loop, until stopped
+    - prompt        # -> ModelRequest: proposer.md, train.py and the results so far
     - propose       # ModelRequest -> ModelResponse: Claude Opus 5.5 or Sonnet 5.5
-    - edits_apply   # guardrail: edits that don't apply, nothing to try
-    - apply         # ModelResponse -> Files: edit train.py and commit
-    - train         # Files -> Execution
-    - ran           # guardrail: a crash is reverted
+    - experiment    # ModelResponse -> Execution: edit train.py, commit and train;
+                    # edits that don't apply are skipped, and a crash is reverted
     - evaluate      # evaluator: Execution -> Metrics, the only place scores come from
-    - improved      # condition: a worse val_bpb is discarded and reverted
-    - keep          # Metrics -> Files
+    - settle        # Metrics -> Files: keep it if val_bpb improved, else discard and revert
 ```
 
 - [pipeline.yaml](./pipeline.yaml) - The pipeline.

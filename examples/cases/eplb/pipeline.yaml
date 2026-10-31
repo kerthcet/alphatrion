@@ -1,0 +1,50 @@
+# EPLB (https://github.com/UCB-ADRS/ADRS/tree/main/openevolve/examples/ADRS/eplb)
+# as a pipeline: a model proposes an edit to the evolve block of the best
+# program so far, ADRS's evaluator scores it on the expert-load trace, and
+# every scored program stays in the tree for the next proposal to build on.
+# The comments show the formats flowing between the nodes.
+name: eplb
+inputs:
+  - data                        # the directory holding expert-load.json
+  - instructions                # the instructions for the model, proposer.md
+runtimes:
+  eval:                         # where programs are evaluated
+    type: host                  # or microsandbox, with an image that has torch
+    mounts:
+      - {path: /data, source: "${inputs.data}"}   # the trace
+      - {path: /upstream, source: upstream}     # ADRS's evaluator
+nodes:
+  - name: seed                  # -> Execution: ADRS's initial program, evaluated
+    type: action
+    fn: seed
+    runtime: eval
+    timeout: 60s                # as ADRS's evaluator timeout
+    exit: {rejected: raise}
+  - name: score_seed            # Execution -> Metrics
+    type: evaluator
+    fn: measure
+  - name: evolve
+    type: loop
+    max_iters: 20
+    nodes:
+      - name: prompt            # -> ModelRequest: the best program, every attempt
+        type: action
+        fn: prompt
+        params:
+          instructions: ${inputs.instructions}
+      - name: propose           # ModelRequest -> ModelResponse
+        type: model_router
+        max_tokens: 32000
+        candidates:
+          - {model: claude-opus-5-5, weight: 0.5, params: {output_config: {effort: high}}}
+          - {model: claude-sonnet-5-5, weight: 0.5, params: {output_config: {effort: high}}}
+        exit: {error: continue}
+      - name: attempt           # ModelResponse -> Execution: the edited program, evaluated
+        type: action
+        fn: attempt
+        runtime: eval
+        timeout: 60s
+        exit: {skip: continue, rejected: continue, timeout: continue}
+      - name: evaluate          # Execution -> Metrics: scores the program
+        type: evaluator
+        fn: measure

@@ -4,14 +4,14 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, get_type_hints
 
 from pydantic import Field, PrivateAttr, model_validator
 
-from alphatrion.swarm.capabilities import Capability, StateView
+from alphatrion.swarm.capabilities import Capability
 from alphatrion.swarm.formats import unify
 from alphatrion.swarm.nodes.base import (
+    FnIO,
     FnRef,
     Node,
     NodeList,
     NodeResult,
-    call,
 )
 from alphatrion.swarm.state import State
 
@@ -88,6 +88,7 @@ class ParallelNode(Node):
 
     _graph: "Graph" = PrivateAttr()
     _join: JoinFn = PrivateAttr()
+    _join_io: FnIO = PrivateAttr()
 
     @model_validator(mode="after")
     def wait_within_n(self) -> Self:
@@ -119,6 +120,7 @@ class ParallelNode(Node):
             self._join = JOINS[self.join]
         else:
             self._join = builder.resolve(self.join)
+        self._join_io = FnIO(self._join, self, builder)
 
     async def run(self, state: State, value: Any) -> NodeResult:
         from alphatrion.swarm.graph import GraphStatus
@@ -157,8 +159,7 @@ class ParallelNode(Node):
             )
 
         results = [r for _, r in sorted(finished, key=lambda x: x[0])]
-        view = StateView(state, self.granted)
-        output = await call(self._join, view, results, **self.params)
+        output = await self._join_io(state, results)
         if isinstance(output, NodeResult):
             return output
         return NodeResult(output=output)

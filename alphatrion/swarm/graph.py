@@ -1,11 +1,18 @@
 import asyncio
+import contextlib
 import enum
+import re
+import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from alphatrion.swarm.context import current_inputs, run_inputs, using_runtime
 from alphatrion.swarm.formats import check_value, compatible, describe, unify
 from alphatrion.swarm.nodes import Node, NodeResult
+from alphatrion.swarm.runtimes import Runtime
 from alphatrion.swarm.state import State
 
 # Exits, the targets of edges that leave a graph. end finishes the current
@@ -22,6 +29,14 @@ BREAK = "break"
 NEXT = "__next__"
 DONE = "__done__"
 RESERVED = {END, RAISE, CONTINUE, BREAK, NEXT, DONE}
+# The routes of a node that failed, after its retries: it ran past its
+# timeout, or raised. Every node has them, and a run fails on one the node
+# doesn't handle. The value passes through, as the node never produced one.
+TIMEOUT = "timeout"
+ERROR = "error"
+FAILURES = (TIMEOUT, ERROR)
+# How long a runtime has to stop before it is killed.
+STOP_GRACE = 10.0
 
 
 class Edge(BaseModel):
@@ -77,14 +92,17 @@ class Graph:
         name: str = "graph",
         exits: set[str] | None = None,
         scope: str | None = None,
+        inputs: set[str] | None = None,
     ):
         """
         :param exits: targets, besides END, that end the graph, e.g. CONTINUE
             and BREAK in a loop body. The reached one is GraphResult.exit.
         :param scope: qualifies the node names recorded in memory, e.g. the
             nodes of a subgraph named experiment as experiment.<name>.
+        :param inputs: the inputs a run must be given, the pipeline's.
         """
         self.name = name
+        self.inputs: set[str] = set(inputs or ())
         self.scope = scope
         self.exits = {END, RAISE, *(exits or ())}
         self.entry: str | None = None
@@ -114,7 +132,7 @@ class Graph:
             # prepare them with one that resolves functions and import paths.
             from alphatrion.swarm.pipeline import Builder
 
-            Builder().node(node)
+            Builder(inputs=self.inputs).node(node)
         self._nodes[node.name] = node
         self._validated = False
         self._edges[node.name] = []
@@ -173,7 +191,11 @@ class Graph:
             node = self._nodes[name]
             received = unify(incoming[name])
             for edge in self._edges[name]:
-                output = node.output_type(edge.when, received)
+                output = (
+                    received
+                    if edge.when in FAILURES
+                    else node.output_type(edge.when, received)
+                )
                 if edge.target in self.exits:
                     self.exit_types.setdefault(edge.target, []).append(output)
                     continue
@@ -250,14 +272,26 @@ class Graph:
         """
         Run the graph on value, which the entry node receives. Pass a state
         to continue from an existing memory and tree, e.g. one loaded from
-        a previous run.
+        a previous run. inputs are the run's, e.g. a data directory, which
+        node functions get as params by name. A nested run, e.g. a loop
+        body, keeps the inputs of the run it's part of.
         """
         self.validate()
         if state is None:
-            state = State(inputs=inputs)
-        elif inputs:
-            state.inputs.update(inputs)
+            state = State()
+        with run_inputs(inputs) as given:
+            missing = self.inputs - set(given)
+            if missing:
+                return GraphResult(
+                    status=GraphStatus.FAILED,
+                    state=state,
+                    path=[],
+                    output=value,
+                    error=f"The run is missing inputs: {', '.join(sorted(missing))}",
+                )
+            return await self._run(state, value)
 
+    async def _run(self, state: State, value: Any) -> GraphResult:
         path: list[str] = []
         current = self.entry
         while True:
@@ -266,13 +300,15 @@ class Graph:
             path.append(node.name)
 
             try:
-                result = await node.run(state, value)
-                # A decision returns the value it received, Any here, which
-                # was checked when it was produced.
+                result = await self._execute(node, state, value)
+                # A decision returns the value it received, Any here, and a
+                # failed node the value it was given, both checked when they
+                # were produced.
                 try:
-                    result.output = check_value(
-                        result.output, node.output_type(result.route)
-                    )
+                    if result.route not in FAILURES:
+                        result.output = check_value(
+                            result.output, node.output_type(result.route)
+                        )
                 except TypeError as e:
                     raise TypeError(
                         f"Node {node.name} returned the wrong format, {e}"
@@ -328,6 +364,66 @@ class Graph:
                     output=value,
                 )
 
+    async def _execute(self, node: Node, state: State, value: Any) -> NodeResult:
+        """
+        Run a node, up to 1 + retries times, each from where it started: in
+        a fresh runtime if it has one, and cancelled at its timeout. A node
+        still failing takes its timeout or error route if it handles it, and
+        fails the run otherwise.
+        """
+        start = state.current_id
+        for attempt in range(1, node.retries + 2):
+            limit = None
+            try:
+                async with self._runtime(node):
+                    async with asyncio.timeout(node.timeout) as limit:
+                        return await node.run(state, value)
+            except Exception as e:
+                if (
+                    isinstance(e, TimeoutError)
+                    and limit is not None
+                    and limit.expired()
+                ):
+                    failure, details = TIMEOUT, f"timed out after {node.timeout:g}s"
+                else:
+                    failure, details = ERROR, f"{type(e).__name__}: {e}"
+                last = e
+            # An attempt that committed is abandoned: its artifacts stay in
+            # the tree, but the next attempt starts from the same one.
+            state.current_id = start
+            if attempt <= node.retries:
+                self._record(
+                    state,
+                    node,
+                    {"attempt": attempt, "route": failure, "details": details},
+                )
+        if any(edge.when == failure for edge in self._edges[node.name]):
+            return NodeResult(route=failure, output=value, details=details)
+        if failure == TIMEOUT:
+            raise TimeoutError(f"Node {node.name} {details}")
+        raise last
+
+    @asynccontextmanager
+    async def _runtime(self, node: Node) -> AsyncIterator[None]:
+        """The node's runtime for one attempt, created for it and stopped
+        when it ends, killed if it doesn't stop in time, so nothing it ran
+        outlives the attempt."""
+        plan = node._runtime
+        if plan is None:
+            yield
+            return
+        name = f"swarm-{re.sub(r'[^a-z0-9-]', '-', node.name.lower())}-{uuid.uuid4().hex[:8]}"
+        # The backend's own deadline, should the engine's process die.
+        deadline = node.timeout + STOP_GRACE if node.timeout is not None else None
+        runtime = await plan.backend.create(
+            name, plan.spec, plan.mounts(current_inputs()), deadline
+        )
+        try:
+            with using_runtime(runtime):
+                yield
+        finally:
+            await _close(runtime)
+
     def _qualified(self, node: Node) -> str:
         return f"{self.scope}.{node.name}" if self.scope else node.name
 
@@ -335,3 +431,14 @@ class Graph:
         if state.branch is not None:
             data["branch"] = state.branch
         state.memory.record(state.step, self._qualified(node), node.type, data)
+
+
+async def _close(runtime: Runtime) -> None:
+    try:
+        await asyncio.wait_for(runtime.stop(STOP_GRACE), STOP_GRACE + 1)
+    except Exception:
+        with contextlib.suppress(Exception):
+            await runtime.kill()
+    finally:
+        with contextlib.suppress(Exception):
+            await runtime.remove()

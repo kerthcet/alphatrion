@@ -64,9 +64,10 @@ async def main():
     graph = build_graph(pipeline, functions=FUNCTIONS)
     # The state is created here, so the results are still at hand when the
     # run is stopped with Ctrl-C.
-    state = State(inputs={"workdir": str(repo), "program": args.program})
+    state = State()
+    inputs = {"workdir": str(repo), "instructions": args.program}
     try:
-        result = await graph.run(state=state)
+        result = await graph.run(state=state, inputs=inputs)
     except asyncio.CancelledError:
         result = None
 

@@ -119,13 +119,23 @@ async def test_weighted_policy():
 async def test_router_takes_the_request_flowing_in():
     client = FakeClient()
 
-    def prompt(state: State, task: Text) -> ModelRequest:
+    # The task is an input of the run, which prompt turns into the request.
+    def prompt(state: State, task: str) -> ModelRequest:
         return ModelRequest(
-            system="be brief", messages=[{"role": "user", "content": task.content}]
+            system="be brief", messages=[{"role": "user", "content": task}]
         )
 
-    graph = build(client, [router(max_tokens=128)], prompt=prompt)
-    await graph.run(value=Text(content="improve train.py"))
+    graph = build_graph(
+        {
+            "inputs": ["task"],
+            "nodes": [
+                {**PROMPT, "params": {"task": "${inputs.task}"}},
+                router(max_tokens=128),
+            ],
+        },
+        functions={"fake": client, "prompt": prompt},
+    )
+    await graph.run(inputs={"task": "improve train.py"})
     _, request, max_tokens = client.requests[0]
     assert request.system == "be brief"
     assert request.messages == [{"role": "user", "content": "improve train.py"}]

@@ -50,7 +50,7 @@ class ModelResponse(Format):
 
 
 class Execution(Format):
-    """A finished process or sandbox run, e.g. a training run or tests."""
+    """A finished command, e.g. a training run or tests."""
 
     exit_code: int | None = Field(description="None if the run timed out.")
     stdout: str = ""

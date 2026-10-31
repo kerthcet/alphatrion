@@ -61,16 +61,16 @@ async def test_autoresearch(repo):
     top = {node.name: node for node in pipeline.nodes}
     research = top["research"]
     nodes = {node.name: node for node in research.nodes}
-    for node in (top["train_baseline"], nodes["train"]):
-        node.params["command"] = f"{sys.executable} train.py"
+    pipeline.params["command"] = f"{sys.executable} train.py"
     research.max_iters = 5
     nodes["propose"].candidates = [Candidate(model="scripted", provider="model")]
 
     graph = build_graph(pipeline, functions={**autoresearch.FUNCTIONS, "model": model})
-    state = State(
-        inputs={"workdir": str(repo), "program": str(EXAMPLE / "proposer.md")}
+    state = State()
+    result = await graph.run(
+        state=state,
+        inputs={"workdir": str(repo), "instructions": str(EXAMPLE / "proposer.md")},
     )
-    result = await graph.run(state=state)
     assert result.status.value == "completed", result.error
 
     rows = [

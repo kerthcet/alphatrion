@@ -120,7 +120,14 @@ lint.ignore = [
     "PLC0415", # `import` should be at the top-level of a file
     "PLW0603", # Using the global statement
 ]
-exclude = ["venv", "alphatrion/framework/migrations", "__pycache__"]
+exclude = [
+    "venv",
+    "alphatrion/framework/migrations",
+    "__pycache__",
+    # Code the cases vendor from upstream projects, kept unchanged so their
+    # results stay comparable.
+    "examples/cases/*/upstream",
+]
 
 [tool.ruff.format]
 quote-style = "double"

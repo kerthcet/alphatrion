@@ -103,7 +103,10 @@ async def main():
                         nodes=[
                             ActionNode(name="propose", fn=propose),
                             EvaluatorNode(name="evaluate", fn=score),
-                            ActionNode(name="keep_or_backtrack", fn=keep_or_backtrack),
+                            ActionNode(
+                                name="keep_or_backtrack",
+                                fn=keep_or_backtrack,
+                            ),
                         ],
                     )
                 ],

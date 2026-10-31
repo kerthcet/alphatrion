@@ -112,7 +112,9 @@ async def test_loop_failure_fails_parent():
         raise ValueError("boom")
 
     loop = LoopNode(
-        name="loop", nodes=[ActionNode(name="broken", fn=broken)], max_iters=3
+        name="loop",
+        nodes=[ActionNode(name="broken", fn=broken)],
+        max_iters=3,
     )
     result = await wrap(loop).run()
     assert result.status == GraphStatus.FAILED

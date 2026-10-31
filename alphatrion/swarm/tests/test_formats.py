@@ -117,6 +117,20 @@ def test_branches_rejoin_with_matching_formats():
         build_graph(pipeline)
 
 
+def zero(state) -> int:
+    return 0
+
+
+def start_at_zero(loop: LoopNode) -> Graph:
+    """A graph running the loop on 0."""
+    return (
+        Graph()
+        .add_node(ActionNode(name="start", fn=zero))
+        .add_node(loop)
+        .add_edge("start", loop.name)
+    )
+
+
 @pytest.mark.asyncio
 async def test_loop_carries_the_value_and_continue_discards():
     def improve(state, n: int) -> int:
@@ -135,14 +149,16 @@ async def test_loop_carries_the_value_and_continue_discards():
             ConditionNode(name="odd", fn=odd, exit={"true": "continue"}),
         ],
     )
-    result = await Graph().add_node(loop).run(value=0)
+    result = await start_at_zero(loop).run()
     # 0 -> 1 (discarded) -> 1 (discarded) ... never carried past 0.
     assert result.output == 0
 
     loop = LoopNode(
-        name="loop", max_iters=5, nodes=[ActionNode(name="improve", fn=improve)]
+        name="loop",
+        max_iters=5,
+        nodes=[ActionNode(name="improve", fn=improve)],
     )
-    result = await Graph().add_node(loop).run(value=0)
+    result = await start_at_zero(loop).run()
     assert result.output == 5
 
 

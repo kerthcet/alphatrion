@@ -16,9 +16,25 @@ pip install alphatrion[all]
   - `exit` leaves the block: `end` finishes the current run and `raise` fails it, and in a loop, `continue` starts the next iteration and `break` ends the loop. Either one exit, like `exit: end`, or a map from routes to exits, like `exit: {fail: continue}`, with an optional `default` key.
 - **Graph** - What a pipeline is built into: a directed acyclic graph of nodes. Repetition is always a `loop` node, so a graph without loops always ends.
 - **Data flow** - A value flows along the connections: each node receives the output of the node before it, so node A's output format must be node B's input format, checked when the pipeline loads and again when it runs. Node functions declare their formats with type hints, `fn(state, value: Files) -> Execution`, and a function without a value parameter, `fn(state)`, takes any. Routing nodes (`condition`, `guardrail`, `switch`) pass the value through unchanged. A loop carries the value from one iteration into the next, and `continue` discards the iteration, so it starts again from the same value.
+- **Params and inputs** - A node function gets exactly what its node's `params` give it, besides the value, and nothing else: each param is a literal, `${params.name}` for a setting of the pipeline, or `${inputs.name}` for an input of the run. The pipeline's `params` are settings nodes share, and its `inputs` what every run must give, with `graph.run(inputs=...)`; neither reaches a function unless a node references it. The value is the one parameter the node doesn't give.
+
+    ```yaml
+    params: {command: uv run train.py}
+    inputs: [workdir]
+    nodes:
+      - name: experiment
+        type: action
+        fn: experiment            # experiment(state, reply, workdir, command, train_timeout)
+        params:
+          workdir: ${inputs.workdir}
+          command: ${params.command}
+          train_timeout: 600
+    ```
+
+  In a one-line `{...}`, quote a reference, like `{source: "${inputs.data}"}`, as YAML reads its `{` as a mapping. A parameter its node doesn't give, without a default, is an error when the pipeline loads, and so is a param no function takes, or a reference to a setting or input the pipeline doesn't have. A run missing an input fails before it starts. A subgraph file's params are defaults its parent's override.
 - **Formats** - The data formats shared by all nodes, in `alphatrion.swarm.formats`: `Text`, `Files`, `ModelRequest`, `ModelResponse`, `Execution` and `Metrics`. New formats subclass `Format`, and a subclass is accepted wherever its base is, so extending a format never breaks the nodes built on it.
 - **Node** - One step of the graph. Built-in types:
-  - `action` - Runs a function, e.g. calling an LLM to propose a new artifact.
+  - `action` - Runs a function, e.g. calling an LLM to propose a new artifact. The function can also choose the route by returning a `NodeResult`, e.g. `NodeResult(route="skip")` for an exit like `exit: {skip: continue}`. A check that must never change belongs in a `guardrail`, which is always immutable.
   - `guardrail` - Runs checks and routes to `pass` or `fail`, with the reasons of failed checks as output. `fail` must have an exit or a branch, e.g. `exit: {fail: raise}` to fail the run.
   - `condition` - Routes by a function that returns a bool, to `true` or `false`.
   - `switch` - Routes by a function that returns the name of a case, e.g. which job to run next. The cases are the keys of its `branches` and `exit`; a value without a case fails the node, unless a `default` key catches it. An empty case, like `idle: []`, does nothing and continues.
@@ -52,10 +68,26 @@ pip install alphatrion[all]
 
   Each type only accepts its own fields, so a misplaced or misspelled field is an error when the pipeline loads.
 - **Capabilities** - What a node may change in the state; reading it is always allowed. `commit` adds artifacts and moves the current one, `remember` writes the memory store, and `score` scores artifacts. Each type has the most its nodes can have: `action` has `commit` and `remember`, `parallel` has `commit` for its join, `evaluator` has `score`, and the others have none, so a `condition`, `switch` or `guardrail` only decides. A node can narrow them, like `capabilities: [commit]`, but never add any. Node functions get the state as a `StateView` limited to them, with a read-only tree, so `commit()` without `commit` raises a `CapabilityError`. Only an evaluator scores, from what its fn measures: `Artifact.score` is frozen, and `commit()` takes no score.
-- **Mutability** - Self-improvement may change a node only if it has `mutable: true`; nodes are immutable by default. An immutable node stays as written, its capabilities and nested nodes included, and a mutable one, like a loop, can change around the immutable nodes inside it, but never gain capabilities. Evaluators and guardrails are always immutable, since they judge what counts as an improvement. `check_mutation(original, mutated)` checks a changed pipeline against this, and that no node with `score` was added.
+- **Timeouts and retries** - Every node can have a `timeout`, like `60s` or `10m`, and `retries`. A node past its timeout is cancelled, and its runtime stopped, so nothing it ran outlives it. A node that fails, by timing out or raising, runs again up to `retries` times, each from where it started. Still failing, it takes its `timeout` or `error` route, like `exit: {timeout: continue}`, and the run fails if it doesn't handle it. A route the node chooses, like a guardrail's `fail`, is an outcome, never retried. Without them, a node has no limit and isn't retried.
+- **Runtimes** - Where a node runs its code: the pipeline's `runtimes` name them, each with a `type`, and a node picks one with `runtime: name`. Its functions reach it as `state.runtime`, to `exec` commands and `write` and `read` files, in its `/work` workspace. Each attempt of the node gets a fresh one, stopped when the attempt ends, and killed if it doesn't stop in time.
+
+    ```yaml
+    runtimes:
+      eval:
+        type: microsandbox          # or host, or a backend passed to build_graph(backends=...)
+        image: python
+        mounts:
+          - {path: /data, source: "${inputs.data}"}   # a directory the run is given
+          - {path: /code, source: code}             # relative to the pipeline file; read-only by default
+    nodes:
+      - {name: evaluate, type: action, fn: run, runtime: eval, timeout: 60s}
+    ```
+
+  A type names how a runtime runs, not where: the built-in ones are `microsandbox`, hardware-isolated microVMs (`pip install microsandbox`), on this machine or on microsandbox's cloud with `MSB_BACKEND=cloud` and `MSB_API_KEY`, and `host`, processes on this machine without isolation, for development and tests. Mounts bind directories of this machine, so they work on a local microVM but not yet on the cloud. Other backends, e.g. Docker or Kubernetes, subclass `Backend`. The runtimes are part of the fixed root: self-improvement can't change them.
+- **Mutability** - Self-improvement may change a node only if it has `mutable: true`; nodes are immutable by default. An immutable node stays as written, its capabilities and nested nodes included, and a mutable one, like a loop, can change around the immutable nodes inside it, but never gain capabilities, loosen its timeout or retries, or change its runtime. Evaluators and guardrails are always immutable, since they judge what counts as an improvement. `check_mutation(original, mutated)` checks a changed pipeline against this, and that no node with `score` was added.
 - **Tree** - Records how the artifact evolved. Each artifact derives from its parent, so a graph can branch to explore several variants and backtrack to the best one.
 - **Memory** - Shared by all nodes: a history of every node execution, plus a key-value store. Memory and the tree can be saved and loaded to continue across runs.
-- **State** - Passed to every node, bundling the inputs, the memory, the tree and the current artifact, which nodes move with `commit()` and `checkout()`.
+- **State** - Passed to every node, bundling the memory, the tree and the current artifact, which nodes move with `commit()` and `checkout()`. It outlives a run, so a run can continue from it, while inputs belong to each run: `graph.run(state=state, inputs={...})`.
 
 ## Example
 

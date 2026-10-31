@@ -7,14 +7,12 @@ else reverted.
 The pipeline has the stages of the research loop, and each stage does its
 details here. Git does the real keeping and reverting in the repo, and the
 tree mirrors it, so the lineage of every experiment and its score stays
-queryable. The repo is state.inputs["workdir"], and the instructions for
-the model are state.inputs["program"].
+queryable. The repo and the model's instructions are the pipeline's
+inputs, workdir and instructions.
 """
 
-import asyncio
 import re
 import subprocess
-import time
 from pathlib import Path
 
 from alphatrion.swarm import (
@@ -23,6 +21,7 @@ from alphatrion.swarm import (
     Metrics,
     ModelRequest,
     ModelResponse,
+    NodeResult,
     State,
 )
 
@@ -33,97 +32,59 @@ HEADER = "commit\tval_bpb\tmemory_gb\tstatus\tdescription\n"
 AUTHOR = ["-c", "user.name=autoresearch", "-c", "user.email=autoresearch@localhost"]
 
 
-def workdir(state: State) -> Path:
-    return Path(state.inputs["workdir"])
-
-
-def git(state: State, *args: str) -> str:
+def git(workdir: str, *args: str) -> str:
     return subprocess.run(
         ["git", *AUTHOR, *args],
-        cwd=workdir(state),
+        cwd=workdir,
         check=True,
         capture_output=True,
         text=True,
     ).stdout.strip()
 
 
-def log_result(state: State, metrics: Metrics | None, status: str) -> None:
+def log_result(
+    state: State, workdir: str, metrics: Metrics | None, status: str
+) -> None:
     val_bpb = metrics.score if metrics else 0.0
     memory_gb = metrics.values.get("peak_vram_mb", 0.0) / 1024 if metrics else 0.0
     description = state.current.metadata.get("description", "baseline")
     commit = state.current.metadata.get("commit", "")
-    with open(workdir(state) / RESULTS, "a") as f:
+    with open(Path(workdir) / RESULTS, "a") as f:
         f.write(f"{commit}\t{val_bpb:.6f}\t{memory_gb:.1f}\t{status}\t{description}\n")
 
 
-async def train(state: State, code: Files, command: str, timeout: float) -> Execution:
-    """Run the training command on the repo, killing it after timeout
-    seconds."""
-    start = time.monotonic()
-    process = await asyncio.create_subprocess_shell(
-        command,
-        cwd=workdir(state),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout)
-    except TimeoutError:
-        process.kill()
-        await process.wait()
-        return Execution(
-            exit_code=None, duration=time.monotonic() - start, timed_out=True
-        )
-    return Execution(
-        exit_code=process.returncode,
-        stdout=stdout.decode(errors="replace"),
-        stderr=stderr.decode(errors="replace"),
-        duration=time.monotonic() - start,
-    )
-
-
-def crashed(run: Execution) -> bool:
-    return not run.succeeded or re.search(r"^val_bpb:", run.stdout, re.M) is None
-
-
-def ran(state: State, run: Execution) -> tuple[bool, str]:
-    """The guardrail check that the run finished and reported val_bpb."""
-    return not crashed(run), f"the run crashed:\n{run.stderr[-2000:]}"
-
-
-def measure(state: State, run: Execution) -> Metrics:
-    """The evaluator: val_bpb, lower is better, and the peak memory."""
-    values = {
-        key: float(value)
-        for key, value in re.findall(
-            r"^(val_bpb|peak_vram_mb):\s*(\S+)", run.stdout, re.M
-        )
-    }
-    return Metrics(values=values, primary="val_bpb", lower_is_better=True)
-
-
-def baseline(state: State) -> Files:
-    """Start results.tsv, untracked by git, and commit the current train.py
-    as the root artifact every experiment is compared with."""
-    (workdir(state) / RESULTS).write_text(HEADER)
-    exclude = workdir(state) / ".git" / "info" / "exclude"
+async def baseline(
+    state: State, workdir: str, command: str, train_timeout: float
+) -> Execution | NodeResult:
+    """Start results.tsv, untracked by git, commit the current train.py as
+    the root artifact every experiment is compared with, and train it once.
+    A crashed baseline ends the step on the crashed route."""
+    repo = Path(workdir)
+    (repo / RESULTS).write_text(HEADER)
+    exclude = repo / ".git" / "info" / "exclude"
     exclude.parent.mkdir(exist_ok=True)
     existing = exclude.read_text() if exclude.exists() else ""
     if RESULTS not in existing.split():
         exclude.write_text(existing + f"\n{RESULTS}\n")
 
-    code = Files(files={TRAIN: (workdir(state) / TRAIN).read_text()})
-    state.commit(code, metadata={"commit": git(state, "rev-parse", "--short", "HEAD")})
-    return code
+    code = Files(files={TRAIN: (repo / TRAIN).read_text()})
+    state.commit(
+        code, metadata={"commit": git(workdir, "rev-parse", "--short", "HEAD")}
+    )
+    run = await train(state, command, train_timeout)
+    if crashed(run):
+        return NodeResult(route="crashed", details=run.stderr[-2000:])
+    log_result(state, workdir, measure(state, run), "keep")
+    return run
 
 
-def propose_prompt(state: State, code: Files) -> ModelRequest:
+def prompt(state: State, instructions: str, workdir: str) -> ModelRequest:
     """Ask for one experiment: the research program as the system prompt,
     and the current train.py with the results so far."""
-    program = Path(state.inputs["program"]).read_text()
-    results = (workdir(state) / RESULTS).read_text()
+    code = state.current.content
+    results = (Path(workdir) / RESULTS).read_text()
     return ModelRequest(
-        system=program,
+        system=Path(instructions).read_text(),
         messages=[
             {
                 "role": "user",
@@ -137,79 +98,87 @@ def propose_prompt(state: State, code: Files) -> ModelRequest:
     )
 
 
-EDIT = re.compile(r"<<<<<<< SEARCH\n(.*?)\n=======\n(.*?)\n>>>>>>> REPLACE", re.S)
-
-
-def edits_apply(state: State, reply: ModelResponse) -> tuple[bool, str]:
-    """The guardrail check that the reply has edits, each matching the
-    current train.py exactly once, so applying them is unambiguous.
-    Otherwise, nothing is tried."""
+async def experiment(
+    state: State,
+    reply: ModelResponse,
+    workdir: str,
+    command: str,
+    train_timeout: float,
+) -> Execution | NodeResult:
+    """Run one experiment: apply the reply's edits to train.py, commit them
+    as a new artifact, and train. A reply whose edits don't each match
+    train.py exactly once is skipped, as nothing is tried, and a run that
+    crashes is logged and reverted, ending the step on the crashed route."""
     code = state.current.content.files[TRAIN]
     edits = EDIT.findall(reply.text)
-    passed = bool(edits) and all(code.count(search) == 1 for search, _ in edits)
-    return passed, "the reply has no edits matching train.py exactly once"
-
-
-def apply(state: State, reply: ModelResponse) -> Files:
-    """Apply the proposed edits to train.py and commit them, as a new
-    artifact for the experiment."""
-    code = state.current.content.files[TRAIN]
-    for search, replace in EDIT.findall(reply.text):
+    if not edits or any(code.count(search) != 1 for search, _ in edits):
+        return NodeResult(
+            route="skip",
+            details="the reply has no edits matching train.py exactly once",
+        )
+    for search, replace in edits:
         code = code.replace(search, replace, 1)
     match = re.search(r"^Description:\s*(.+)$", reply.text, re.M)
     description = match.group(1).strip() if match else "no description"
 
-    (workdir(state) / TRAIN).write_text(code)
-    git(state, "commit", "-qam", description)
-    files = Files(files={TRAIN: code}, metadata={"model": reply.model})
-    commit = git(state, "rev-parse", "--short", "HEAD")
-    state.commit(files, metadata={"commit": commit, "description": description})
-    return files
+    (Path(workdir) / TRAIN).write_text(code)
+    git(workdir, "commit", "-qam", description)
+    commit = git(workdir, "rev-parse", "--short", "HEAD")
+    state.commit(
+        Files(files={TRAIN: code}, metadata={"model": reply.model}),
+        metadata={"commit": commit, "description": description},
+    )
+    run = await train(state, command, train_timeout)
+    if crashed(run):
+        log_result(state, workdir, None, "crash")
+        revert(state, workdir)
+        return NodeResult(route="crashed", details=run.stderr[-2000:])
+    return run
 
 
-def improved(state: State, metrics: Metrics) -> bool:
-    """Whether the experiment's val_bpb, scored by the evaluator, is lower
-    than that of the train.py it started from."""
-    return metrics.score < state.tree.parent(state.current.id).score
+def measure(state: State, run: Execution) -> Metrics:
+    """The evaluator: val_bpb, lower is better, and the peak memory."""
+    values = {
+        key: float(value)
+        for key, value in re.findall(
+            r"^(val_bpb|peak_vram_mb):\s*(\S+)", run.stdout, re.M
+        )
+    }
+    return Metrics(values=values, primary="val_bpb", lower_is_better=True)
 
 
-def keep(state: State, metrics: Metrics) -> Files:
-    """Keep the experiment, and return the train.py the next one starts
-    from."""
-    log_result(state, metrics, "keep")
-    return state.current.content
+def settle(state: State, metrics: Metrics, workdir: str) -> Files:
+    """Keep the experiment if its val_bpb, scored by the evaluator, is lower
+    than that of the train.py it started from, else discard and revert it.
+    Returns the train.py the next experiment starts from."""
+    if metrics.score < state.tree.parent(state.current.id).score:
+        log_result(state, workdir, metrics, "keep")
+        return state.current.content
+    log_result(state, workdir, metrics, "discard")
+    return revert(state, workdir)
 
 
-def discard(state: State, metrics: Metrics) -> Files:
-    log_result(state, metrics, "discard")
-    return revert(state)
+async def train(state: State, command: str, train_timeout: float) -> Execution:
+    """Run the training command on the repo, mounted at /repo in the node's
+    runtime, killing it and everything it started after train_timeout
+    seconds."""
+    return await state.runtime.exec(
+        "sh", ["-c", command], cwd="/repo", timeout=train_timeout
+    )
 
 
-def crash(state: State, run: Execution) -> Files:
-    log_result(state, None, "crash")
-    return revert(state)
+def crashed(run: Execution) -> bool:
+    return not run.succeeded or re.search(r"^val_bpb:", run.stdout, re.M) is None
 
 
-def revert(state: State) -> Files:
+EDIT = re.compile(r"<<<<<<< SEARCH\n(.*?)\n=======\n(.*?)\n>>>>>>> REPLACE", re.S)
+
+
+def revert(state: State, workdir: str) -> Files:
     """Undo the last experiment, in git and in the tree, and return the
     train.py before it."""
-    git(state, "reset", "-q", "--hard", "HEAD~1")
+    git(workdir, "reset", "-q", "--hard", "HEAD~1")
     return state.checkout(state.tree.parent(state.current.id).id).content
 
 
-FUNCTIONS = {
-    fn.__name__: fn
-    for fn in (
-        baseline,
-        train,
-        ran,
-        measure,
-        propose_prompt,
-        edits_apply,
-        apply,
-        improved,
-        keep,
-        discard,
-        crash,
-    )
-}
+FUNCTIONS = {fn.__name__: fn for fn in (baseline, prompt, experiment, measure, settle)}
