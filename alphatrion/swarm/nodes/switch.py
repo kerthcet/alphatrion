@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 class SwitchNode(DecisionNode):
     """
-    Routes by fn(state, value, **params), which returns the name of a case,
+    Routes by fn(state, **params), which returns the name of a case,
     e.g. to pick which job to run next. The cases are the keys of the node's
     branches and exit. A case without a key fails the node, unless a
     `default` key catches every other case.
@@ -45,11 +45,8 @@ class SwitchNode(DecisionNode):
     def _prepare(self, builder: "Builder") -> None:
         self._fn = FnIO(builder.resolve(self.fn), self, builder)
 
-    def input_type(self) -> Any:
-        return self._fn.input_type
-
-    async def decide(self, state: State, value: Any) -> tuple[str, Any]:
-        case = await self._fn(state, value)
+    async def decide(self, state: State) -> tuple[str, Any]:
+        case = await self._fn(state)
         if not isinstance(case, str):
             raise TypeError(
                 f"Switch {self.name} must return a str, got {type(case).__name__}"

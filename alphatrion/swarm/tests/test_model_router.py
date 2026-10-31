@@ -41,6 +41,7 @@ def router(**fields):
     return {
         "name": "ask",
         "type": "model_router",
+        "params": {"request": "${nodes.prompt.output}"},
         "candidates": [
             {"model": "a", "provider": "fake"},
             {"model": "b", "provider": "fake"},
@@ -53,7 +54,7 @@ PROMPT = {"name": "prompt", "type": "action", "fn": "prompt"}
 
 
 def build(client, nodes, prompt=ask, **functions):
-    # The router takes the ModelRequest built by the node before it.
+    # The router sends the ModelRequest prompt builds.
     return build_graph(
         {"nodes": [PROMPT, *nodes]},
         functions={"fake": client, "prompt": prompt, **functions},
@@ -83,13 +84,19 @@ async def test_every_candidate_failing():
     assert result.status == GraphStatus.FAILED
     assert "every candidate failed" in result.error
 
-    # With it, the node routes to error, passing the request on.
+    # With it, the node routes to error, without an output, and the branch
+    # can still reference the request before it.
     seen = []
 
     def recover(state, request: ModelRequest):
         seen.append(request.messages[0]["content"])
 
-    recover_node = {"name": "recover", "type": "action", "fn": "recover"}
+    recover_node = {
+        "name": "recover",
+        "type": "action",
+        "fn": "recover",
+        "params": {"request": "${nodes.prompt.output}"},
+    }
     graph = build(client, [router(branches={"error": [recover_node]})], recover=recover)
     result = await graph.run()
     assert result.status == GraphStatus.COMPLETED
@@ -116,7 +123,7 @@ async def test_weighted_policy():
 
 
 @pytest.mark.asyncio
-async def test_router_takes_the_request_flowing_in():
+async def test_router_sends_the_request_it_references():
     client = FakeClient()
 
     # The task is an input of the run, which prompt turns into the request.
@@ -146,7 +153,10 @@ def test_router_formats_are_checked():
     def not_a_request(state) -> Text:
         return Text(content="hi")
 
-    with pytest.raises(ValueError, match="outputs Text, but ask takes ModelRequest"):
+    with pytest.raises(
+        ValueError,
+        match=r"Node ask param request takes ModelRequest, but \$\{nodes.prompt.output\} is Text",
+    ):
         build(FakeClient(), [router()], prompt=not_a_request)
 
 
@@ -165,6 +175,21 @@ def test_provider_inference_and_lazy_clients():
     )
     candidates = graph.nodes["ask"].candidates
     assert [c.provider_name for c in candidates] == ["anthropic", "openai"]
+
+
+def test_the_request_is_a_param():
+    # Checked like any node's params, from run(self, state, request).
+    with pytest.raises(ValueError, match="Node ask takes 'request', which the node"):
+        build(FakeClient(), [router(params={})])
+    with pytest.raises(ValueError, match="params it doesn't take: tokens"):
+        build(
+            FakeClient(),
+            [router(params={"request": "${nodes.prompt.output}", "tokens": 9})],
+        )
+    with pytest.raises(
+        ValueError, match="Node ask param request: expected ModelRequest"
+    ):
+        build(FakeClient(), [router(params={"request": "hi"})])
 
 
 def test_invalid_router():

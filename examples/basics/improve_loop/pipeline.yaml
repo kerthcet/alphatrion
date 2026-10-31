@@ -22,3 +22,5 @@ nodes:
       - name: evaluate
         type: evaluator
         fn: score
+        params:
+          artifact: ${nodes.propose.output}

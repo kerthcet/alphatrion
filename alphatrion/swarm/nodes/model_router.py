@@ -4,7 +4,10 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from alphatrion.swarm.formats import ModelRequest, ModelResponse
+from alphatrion.swarm.formats import (
+    ModelRequest,
+    ModelResponse,
+)
 from alphatrion.swarm.nodes.base import Node, NodeResult
 from alphatrion.swarm.providers.base import ModelClient, ModelError
 from alphatrion.swarm.state import State
@@ -35,9 +38,10 @@ class Candidate(BaseModel):
         description="The environment variable holding the API key, the "
         "provider's default if None.",
     )
-    params: dict[str, Any] = Field(
+    options: dict[str, Any] = Field(
         default_factory=dict,
-        description="Extra request parameters for this model, passed as is.",
+        description="Extra request settings for this model's API, passed as is, "
+        "e.g. {output_config: {effort: high}}.",
     )
 
     @property
@@ -49,15 +53,16 @@ class Candidate(BaseModel):
 
 class ModelRouterNode(Node):
     """
-    Sends the ModelRequest it receives to one of several candidate models,
-    e.g. to propose an improvement, and outputs the ModelResponse. The
+    Sends the ModelRequest its request param references, e.g.
+    `params: {request: ${nodes.prompt.output}}`, to one of several candidate
+    models, e.g. to propose an improvement, and outputs the ModelResponse. The
     weighted policy tries the candidates in a random order drawn by weight,
     and the fallback policy in their listed order. A failed attempt, e.g. a
     timeout, a rate limit or a refusal, moves on to the next candidate.
 
     It routes to "ok", with the failed attempts as details. When every
-    candidate fails, it routes to "error" if the node handles that route,
-    passing the request on, and fails otherwise.
+    candidate fails, it routes to "error", without an output, if the node
+    handles that route, and fails otherwise.
     """
 
     routes: ClassVar[frozenset[str] | None] = frozenset({"ok", "error"})
@@ -127,21 +132,19 @@ class ModelRouterNode(Node):
             {"error", "default"} & set(self.exit)
         )
 
-    def input_type(self) -> Any:
-        return ModelRequest
+    def output_type(self) -> Any:
+        return ModelResponse
 
-    def output_type(self, route: str | None = None, received: Any = Any) -> Any:
-        # On error, the request passes on, e.g. to retry it differently.
-        return ModelRequest if route == "error" else ModelResponse
+    def outputs_on(self, route: str | None) -> bool:
+        return route == "ok"
 
-    async def run(self, state: State, value: Any) -> NodeResult:
-        request = value
+    async def run(self, state: State, request: ModelRequest) -> NodeResult:
         errors = []
         for i in self._order():
             candidate = self.candidates[i]
             try:
                 response = await self._client(i).complete(
-                    candidate.model, request, self.max_tokens, candidate.params
+                    candidate.model, request, self.max_tokens, candidate.options
                 )
             except ModelError as e:
                 errors.append(str(e))
@@ -149,7 +152,7 @@ class ModelRouterNode(Node):
             return NodeResult(route="ok", output=response, details=errors)
 
         if self._handles_error:
-            return NodeResult(route="error", output=request, details=errors)
+            return NodeResult(route="error", details=errors)
         raise RuntimeError(
             f"Model router {self.name}: every candidate failed: {'; '.join(errors)}"
         )

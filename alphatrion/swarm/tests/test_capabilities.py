@@ -27,12 +27,12 @@ def score_directly(state):
     state.tree._set_score(state.current_id, 1.0)
 
 
-def commits(state, value) -> bool:
+def commits(state) -> bool:
     state.commit("v2")
     return True
 
 
-def score(state, value) -> float:
+def score(state) -> float:
     return 0.5
 
 

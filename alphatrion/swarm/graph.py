@@ -9,9 +9,15 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from alphatrion.swarm.context import current_inputs, run_inputs, using_runtime
-from alphatrion.swarm.formats import check_value, compatible, describe, unify
+from alphatrion.swarm.context import (
+    current_inputs,
+    output_scope,
+    run_inputs,
+    using_runtime,
+)
+from alphatrion.swarm.formats import check_value, describe, unify
 from alphatrion.swarm.nodes import Node, NodeResult
+from alphatrion.swarm.nodes.base import NO_OUTPUT
 from alphatrion.swarm.runtimes import Runtime
 from alphatrion.swarm.state import State
 
@@ -110,9 +116,6 @@ class Graph:
         self._edges: dict[str, list[Edge]] = {}
         # Validation is cached, since loop bodies run once per iteration.
         self._validated = False
-        # The formats the graph takes and ends with, set by validate().
-        self.input_type: Any = Any
-        self.exit_types: dict[str, list[Any]] = {}
 
     @property
     def nodes(self) -> dict[str, Node]:
@@ -132,7 +135,10 @@ class Graph:
             # prepare them with one that resolves functions and import paths.
             from alphatrion.swarm.pipeline import Builder
 
-            Builder(inputs=self.inputs).node(node)
+            # It references the nodes added before it.
+            builder = Builder(inputs=self.inputs)
+            builder._available = dict(self._nodes)
+            builder.node(node)
         self._nodes[node.name] = node
         self._validated = False
         self._edges[node.name] = []
@@ -175,37 +181,77 @@ class Graph:
                 f"Graph {self.name} has a cycle {' -> '.join(cycle)}, "
                 "use a LoopNode to repeat nodes"
             )
-        self._check_formats()
         self._validated = True
 
-    def _check_formats(self) -> None:
-        """Check every edge: its source's output format must match its
-        target's input format. Each node's output format can depend on the
-        one flowing into it, e.g. a decision outputs what it receives."""
-        incoming: dict[str, list[Any]] = {name: [] for name in self._nodes}
-        entry = self._nodes[self.entry]
-        self.input_type = entry.input_type()
-        incoming[self.entry].append(self.input_type)
-        self.exit_types = {}
-        for name in self._topological_order():
+    @property
+    def output_type(self) -> Any:
+        """The format of the graph's output, its last output: the outputs of
+        the nodes it can end after, Any if they differ."""
+        formats = []
+        for name, edges in self._edges.items():
             node = self._nodes[name]
-            received = unify(incoming[name])
-            for edge in self._edges[name]:
-                output = (
-                    received
-                    if edge.when in FAILURES
-                    else node.output_type(edge.when, received)
-                )
-                if edge.target in self.exits:
-                    self.exit_types.setdefault(edge.target, []).append(output)
+            for edge in edges:
+                if edge.target not in (END, NEXT, DONE) or edge.when in FAILURES:
                     continue
-                target = self._nodes[edge.target]
-                if not compatible(output, target.input_type()):
-                    raise ValueError(
-                        f"Node {name} outputs {describe(output)}, but "
-                        f"{edge.target} takes {describe(target.input_type())}"
-                    )
-                incoming[edge.target].append(output)
+                fmt = node.output_type() if node.outputs_on(edge.when) else None
+                # Ending after a decision, the last output is an earlier one.
+                formats.append(Any if fmt is None else fmt)
+        return unify(formats)
+
+    def describe(self) -> str:
+        """
+        Each node, in the order they run, with what it outputs, what it's
+        given: its params, with the references to the outputs it takes, its
+        runtime, timeout and retries, and where its routes go. The nodes nested in a loop, a parallel node or
+        a subgraph are indented under it. Built from the graph itself, it
+        is always what runs.
+        """
+        self.validate()
+        rows: list[tuple[str, str, str]] = []
+        self._describe(rows, 0)
+        width = max(len(name) for name, _, _ in rows)
+        flow = max(len(io) for _, io, _ in rows)
+        return "\n".join(
+            f"{name:<{width}}  {io:<{flow}}  {notes}".rstrip()
+            for name, io, notes in rows
+        )
+
+    def _describe(self, rows: list[tuple[str, str, str]], depth: int) -> None:
+        order = self._topological_order()
+        for name in order:
+            node = self._nodes[name]
+            output = node.output_type()
+            io = "" if output is None else f"-> {_name(output)}"
+            notes = [node.type]
+            for key in ("max_iters", "n", "join", "wait"):
+                if getattr(node, key, None) is not None:
+                    notes.append(f"{key}: {getattr(node, key)}")
+            if node.params:
+                notes.append(
+                    "params: " + ", ".join(f"{k}={v}" for k, v in node.params.items())
+                )
+            if node.runtime is not None:
+                notes.append(f"runtime: {node.runtime}")
+            if node.timeout is not None:
+                notes.append(f"timeout: {node.timeout:g}s")
+            if node.retries:
+                notes.append(f"retries: {node.retries}")
+            routes = [
+                f"{edge.when} -> {edge.target}"
+                for edge in self._edges[name]
+                if edge.when is not None
+            ]
+            default = next(e for e in self._edges[name] if e.when is None)
+            # Running off the last node ends the graph, which goes unsaid.
+            ends = default.target == END and name == order[-1]
+            if default.target in (END, RAISE, CONTINUE, BREAK) and not ends:
+                routes.append(f"-> {default.target}")
+            if routes:
+                notes.append("routes: " + ", ".join(routes))
+            rows.append(("  " * depth + name, io, "  ".join(notes)))
+            nested = getattr(node, "_graph", None)
+            if isinstance(nested, Graph):
+                nested._describe(rows, depth + 1)
 
     def _topological_order(self) -> list[str]:
         indegree = {name: 0 for name in self._nodes}
@@ -267,14 +313,14 @@ class Graph:
         self,
         state: State | None = None,
         inputs: dict[str, Any] | None = None,
-        value: Any = None,
     ) -> GraphResult:
         """
-        Run the graph on value, which the entry node receives. Pass a state
-        to continue from an existing memory and tree, e.g. one loaded from
-        a previous run. inputs are the run's, e.g. a data directory, which
-        node functions get as params by name. A nested run, e.g. a loop
-        body, keeps the inputs of the run it's part of.
+        Run the graph. Pass a state to continue from an existing memory and
+        tree, e.g. one loaded from a previous run. inputs are the run's, e.g.
+        a data directory, which nodes reference as ${inputs.name}. A nested
+        run, e.g. a loop body, keeps the inputs of the run it's part of, and
+        sees the outputs before it. The result's output is the run's last
+        output.
         """
         self.validate()
         if state is None:
@@ -286,13 +332,15 @@ class Graph:
                     status=GraphStatus.FAILED,
                     state=state,
                     path=[],
-                    output=value,
                     error=f"The run is missing inputs: {', '.join(sorted(missing))}",
                 )
-            return await self._run(state, value)
+            with output_scope() as outputs:
+                return await self._run(state, outputs)
 
-    async def _run(self, state: State, value: Any) -> GraphResult:
+    async def _run(self, state: State, outputs: dict[str, Any]) -> GraphResult:
         path: list[str] = []
+        # The last output, the run's.
+        value = None
         current = self.entry
         while True:
             node = self._nodes[current]
@@ -300,19 +348,24 @@ class Graph:
             path.append(node.name)
 
             try:
-                result = await self._execute(node, state, value)
-                # A decision returns the value it received, Any here, and a
-                # failed node the value it was given, both checked when they
-                # were produced.
-                try:
-                    if result.route not in FAILURES:
-                        result.output = check_value(
-                            result.output, node.output_type(result.route)
-                        )
-                except TypeError as e:
-                    raise TypeError(
-                        f"Node {node.name} returned the wrong format, {e}"
-                    ) from None
+                result = await self._execute(node, state)
+                # Only a node's own routes have an output, checked against
+                # its format, which the nodes referencing it were checked
+                # against when the graph was built.
+                produced = (
+                    result.route not in FAILURES
+                    and node.outputs_on(result.route)
+                    and result.output is not NO_OUTPUT
+                )
+                if produced:
+                    try:
+                        result.output = check_value(result.output, node.output_type())
+                    except TypeError as e:
+                        raise TypeError(
+                            f"Node {node.name} returned the wrong format, {e}"
+                        ) from None
+                else:
+                    result.output = None
                 current = self.next(node.name, result)
             except Exception as e:
                 error = f"{type(e).__name__}: {e}"
@@ -337,7 +390,9 @@ class Graph:
                     "artifact_id": state.current_id,
                 },
             )
-            value = result.output
+            if produced:
+                outputs[node.name] = result.output
+                value = result.output
             state.step += 1
             # Yield to the event loop, so parallel branches interleave even
             # when their nodes are sync functions.
@@ -364,7 +419,7 @@ class Graph:
                     output=value,
                 )
 
-    async def _execute(self, node: Node, state: State, value: Any) -> NodeResult:
+    async def _execute(self, node: Node, state: State) -> NodeResult:
         """
         Run a node, up to 1 + retries times, each from where it started: in
         a fresh runtime if it has one, and cancelled at its timeout. A node
@@ -377,7 +432,7 @@ class Graph:
             try:
                 async with self._runtime(node):
                     async with asyncio.timeout(node.timeout) as limit:
-                        return await node.run(state, value)
+                        return await node.call(state)
             except Exception as e:
                 if (
                     isinstance(e, TimeoutError)
@@ -398,7 +453,7 @@ class Graph:
                     {"attempt": attempt, "route": failure, "details": details},
                 )
         if any(edge.when == failure for edge in self._edges[node.name]):
-            return NodeResult(route=failure, output=value, details=details)
+            return NodeResult(route=failure, details=details)
         if failure == TIMEOUT:
             raise TimeoutError(f"Node {node.name} {details}")
         raise last
@@ -442,3 +497,7 @@ async def _close(runtime: Runtime) -> None:
     finally:
         with contextlib.suppress(Exception):
             await runtime.remove()
+
+
+def _name(fmt: Any) -> str:
+    return "any" if fmt is Any else describe(fmt)

@@ -2,7 +2,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self
 
 from pydantic import Field, PrivateAttr, model_validator
 
-from alphatrion.swarm.formats import unify
 from alphatrion.swarm.nodes.base import Node, NodeList, NodeResult
 from alphatrion.swarm.state import State
 
@@ -19,10 +18,10 @@ class SubgraphNode(Node):
     reused across pipelines. Its type can be left out: a node with nodes or
     a subgraph file and no type is a subgraph.
 
-    It behaves like a function call: it takes the format its first node
-    takes, and outputs what it ends with. An `end` exit inside returns to
-    the parent, and loops' `continue` and `break` don't cross it. Its nodes
-    have a name scope of their own, and are recorded in memory as
+    It behaves like a function call: its nodes reference the outputs before
+    it, and its output is the last output of its nodes. An `end` exit inside
+    returns to the parent, and loops' `continue` and `break` don't cross it.
+    Its nodes have a name scope of their own, and are recorded in memory as
     <subgraph>.<name>.
     """
 
@@ -47,18 +46,13 @@ class SubgraphNode(Node):
     def _prepare(self, builder: "Builder") -> None:
         self._graph = builder.subgraph(self.name, self.nodes, self.subgraph)
 
-    def input_type(self) -> Any:
-        return self._graph.input_type
+    def output_type(self) -> Any:
+        return self._graph.output_type
 
-    def output_type(self, route: str | None = None, received: Any = Any) -> Any:
-        from alphatrion.swarm.graph import END
-
-        return unify(self._graph.exit_types.get(END, []))
-
-    async def run(self, state: State, value: Any) -> NodeResult:
+    async def run(self, state: State) -> NodeResult:
         from alphatrion.swarm.graph import GraphStatus
 
-        result = await self._graph.run(state=state, value=value)
+        result = await self._graph.run(state=state)
         if result.status == GraphStatus.FAILED:
             raise RuntimeError(f"Subgraph {self.name} failed: {result.error}")
         return NodeResult(output=result.output)

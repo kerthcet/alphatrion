@@ -16,7 +16,11 @@ def check(state, text: Text, timeout: int, retries: int = 1) -> Text:
     return Text(content=f"{text.content}, checked {timeout}x{retries}")
 
 
-FUNCTIONS = {fn.__name__: fn for fn in (read, wait, check)}
+def pause(state, timeout: int) -> int:
+    return timeout
+
+
+FUNCTIONS = {fn.__name__: fn for fn in (read, wait, check, pause)}
 
 
 def build(pipeline: str):
@@ -31,8 +35,14 @@ async def test_a_function_gets_exactly_its_node_s_params():
         inputs: [path]
         nodes:
           - {name: read, type: action, fn: read, params: {path: "${inputs.path}"}}
-          - {name: wait, type: action, fn: wait, params: {timeout: "${params.timeout}"}}
-          - {name: check, type: action, fn: check, params: {timeout: 5}}
+          - name: wait
+            type: action
+            fn: wait
+            params: {text: "${nodes.read.output}", timeout: "${params.timeout}"}
+          - name: check
+            type: action
+            fn: check
+            params: {text: "${nodes.wait.output}", timeout: 5}
         """
     )
     result = await graph.run(inputs={"path": "data/"})
@@ -46,22 +56,22 @@ def test_params_are_checked_when_built():
     cases = [
         # A parameter the node doesn't give.
         (
-            "nodes: [{name: w, type: action, fn: wait}]",
-            "function wait takes 'timeout', which the node doesn't give",
+            "nodes: [{name: w, type: action, fn: pause}]",
+            "function pause takes 'timeout', which the node doesn't give",
         ),
         # A pipeline param isn't given implicitly, only by reference.
         (
-            "params: {timeout: 60}\nnodes: [{name: w, type: action, fn: wait}]",
+            "params: {timeout: 60}\nnodes: [{name: w, type: action, fn: pause}]",
             "doesn't give",
         ),
         # A param the function doesn't take.
         (
-            "nodes: [{name: w, type: action, fn: wait, params: {timeout: 1, tmeout: 2}}]",
-            "none of its functions takes: tmeout",
+            "nodes: [{name: w, type: action, fn: pause, params: {timeout: 1, tmeout: 2}}]",
+            "params it doesn't take: tmeout",
         ),
         # References to what the pipeline doesn't declare.
         (
-            'nodes: [{name: w, type: action, fn: wait, params: {timeout: "${params.timeout}"}}]',
+            'nodes: [{name: w, type: action, fn: pause, params: {timeout: "${params.timeout}"}}]',
             r"is \$\{params.timeout\}, which is not a param",
         ),
         (
@@ -70,7 +80,7 @@ def test_params_are_checked_when_built():
         ),
         # A malformed reference.
         (
-            'params: {t: 1}\nnodes: [{name: w, type: action, fn: wait, params: {timeout: "${param.t}"}}]',
+            'params: {t: 1}\nnodes: [{name: w, type: action, fn: pause, params: {timeout: "${param.t}"}}]',
             "a reference is",
         ),
     ]
@@ -165,6 +175,8 @@ async def test_subgraph_files_take_the_parent_s_params(tmp_path):
                         "type": "action",
                         "fn": "check",
                         "params": {
+                            # read, before the subgraph, in the parent.
+                            "text": "${nodes.read.output}",
                             "timeout": "${params.timeout}",
                             "retries": "${params.retries}",
                         },

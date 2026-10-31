@@ -33,10 +33,10 @@ def seed(state: State) -> Artifact:
     return state.commit("".join(rng.choice(ALPHABET) for _ in TARGET))
 
 
-def score(state: State, artifact: Artifact) -> float:
-    return sum(a == b for a, b in zip(artifact.content, TARGET, strict=True)) / len(
-        TARGET
-    )
+def score(state: State) -> float:
+    # The current artifact, which the branch that ran committed.
+    content = state.current.content
+    return sum(a == b for a, b in zip(content, TARGET, strict=True)) / len(TARGET)
 
 
 def pick_job(state: State, weights: dict[str, float]) -> str:

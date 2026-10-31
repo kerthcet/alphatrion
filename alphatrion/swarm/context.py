@@ -1,3 +1,4 @@
+from collections import ChainMap
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -44,3 +45,24 @@ def using_runtime(runtime: Any) -> Iterator[None]:
         yield
     finally:
         _runtime.reset(token)
+
+
+# The outputs of the nodes that have run, by name, which nodes reference as
+# ${nodes.name.output}. Each graph run has a scope of its own over the one it
+# is part of, so a loop iteration or a parallel branch sees the outputs
+# before it, and its own, but no other's.
+_outputs: ContextVar[ChainMap | None] = ContextVar("outputs", default=None)
+
+
+def current_outputs() -> ChainMap:
+    return _outputs.get() or ChainMap()
+
+
+@contextmanager
+def output_scope() -> Iterator[ChainMap]:
+    scope = current_outputs().new_child()
+    token = _outputs.set(scope)
+    try:
+        yield scope
+    finally:
+        _outputs.reset(token)

@@ -12,12 +12,14 @@ if TYPE_CHECKING:
 
 class ActionNode(Node):
     """
-    Runs fn(state, value, **params) on the value from the node before it, or
-    fn(state, **params) if fn doesn't take it, e.g. to build a model request
-    or apply a model's edit. Its return value is the output, and its
-    annotations are the input and output formats. fn can also return a
-    NodeResult to choose the route itself, e.g. NodeResult(route="skip") for
-    an exit like `exit: {skip: continue}`.
+    Runs fn(state, **params), e.g. to build a model request or apply a
+    model's edit. Its return value is its output, which later nodes
+    reference as ${nodes.name.output}, and its return annotation is the
+    output format.
+
+    fn can also return a NodeResult to choose the route itself, e.g.
+    NodeResult(route="skip", details=reason) for an exit like
+    `exit: {skip: continue}`. On a route it chooses, the node has no output.
     """
 
     CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
@@ -36,15 +38,11 @@ class ActionNode(Node):
     def _prepare(self, builder: "Builder") -> None:
         self._fn = FnIO(builder.resolve(self.fn), self, builder)
 
-    def input_type(self) -> Any:
-        return self._fn.input_type
+    def output_type(self) -> Any:
+        return self._fn.output_type
 
-    def output_type(self, route: str | None = None, received: Any = Any) -> Any:
-        # A route the function chose outputs what it returned with it.
-        return self._fn.output_type if route is None else Any
-
-    async def run(self, state: State, value: Any) -> NodeResult:
-        result = await self._fn(state, value)
+    async def run(self, state: State) -> NodeResult:
+        result = await self._fn(state)
         if isinstance(result, NodeResult):
             return result
         return NodeResult(output=result)

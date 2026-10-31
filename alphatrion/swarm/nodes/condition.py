@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 class ConditionNode(DecisionNode):
     """
-    Routes by fn(state, value, **params), which returns a bool: True routes
+    Routes by fn(state, **params), which returns a bool: True routes
     to "true" and False to "false". To route among more options, use a
     switch.
     """
@@ -27,11 +27,8 @@ class ConditionNode(DecisionNode):
     def _prepare(self, builder: "Builder") -> None:
         self._fn = FnIO(builder.resolve(self.fn), self, builder)
 
-    def input_type(self) -> Any:
-        return self._fn.input_type
-
-    async def decide(self, state: State, value: Any) -> tuple[str, Any]:
-        result = await self._fn(state, value)
+    async def decide(self, state: State) -> tuple[str, Any]:
+        result = await self._fn(state)
         if not isinstance(result, bool):
             raise TypeError(
                 f"Condition {self.name} must return a bool, got {type(result).__name__}"

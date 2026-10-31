@@ -34,8 +34,9 @@ def not_negative(state: State):
     return state.current.content >= 0, "artifact is negative"
 
 
-def score(state: State, artifact):
-    return artifact.content
+def score(state: State):
+    # The artifact the node before committed.
+    return state.current.content
 
 
 def good_enough(state: State, target: int):

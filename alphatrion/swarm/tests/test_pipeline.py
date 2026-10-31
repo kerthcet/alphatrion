@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 
@@ -149,7 +149,7 @@ async def test_explore_pipeline(tmp_path):
         functions={
             "seed": lambda state: state.commit(0),
             "propose_variant": propose_variant,
-            "score": lambda state, artifact: artifact.content,
+            "score": lambda state: state.current.content,
             "improved": improved,
             "found_better": lambda state: False,
             "report": lambda state: reports.append(state.current.score),
@@ -262,8 +262,45 @@ class LLMNode(Node):
     type: Literal["llm"] = "llm"
     model: str
 
-    async def run(self, state: State, value) -> NodeResult:
+    def output_type(self) -> Any:
+        return str
+
+    async def run(self, state: State) -> NodeResult:
         return NodeResult(output=self.model)
+
+
+class ShoutNode(Node):
+    """A custom node taking a param: it declares it in run, and gets it
+    resolved and checked, like a function's."""
+
+    type: Literal["shout"] = "shout"
+
+    def output_type(self) -> Any:
+        return str
+
+    async def run(self, state: State, text: str) -> NodeResult:
+        return NodeResult(output=text.upper())
+
+
+@pytest.mark.asyncio
+async def test_custom_type_with_params():
+    pipeline = {
+        "nodes": [
+            {"name": "ask", "type": "llm", "model": "claude-opus-5-5"},
+            {
+                "name": "shout",
+                "type": "shout",
+                "params": {"text": "${nodes.ask.output}"},
+            },
+        ]
+    }
+    result = await build_graph(pipeline, node_types=[LLMNode, ShoutNode]).run()
+    assert result.status == GraphStatus.COMPLETED, result.error
+    assert result.output == "CLAUDE-OPUS-5-5"
+    with pytest.raises(ValueError, match="Node shout takes 'text'"):
+        build_graph(
+            {"nodes": [{"name": "shout", "type": "shout"}]}, node_types=[ShoutNode]
+        )
 
 
 @pytest.mark.asyncio

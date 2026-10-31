@@ -138,7 +138,7 @@ def build_explore(**kwargs) -> ParallelNode:
     def propose(state: State):
         return state.commit(f"variant-{branch_index(state)}")
 
-    def score(state: State, artifact):
+    def score(state: State):
         # Branch 1 proposes the best variant.
         return {0: 0.2, 1: 0.9, 2: 0.5}[branch_index(state)]
 
@@ -219,7 +219,7 @@ def build_racers(wait: int | None, fail: set[int], raises: set[int] = frozenset(
         nodes=[
             ActionNode(name="race_step", fn=race),
             GuardrailNode(name="guard", checks=[ok], exit={"fail": "raise"}),
-            EvaluatorNode(name="evaluate", fn=lambda state, artifact: artifact.content),
+            EvaluatorNode(name="evaluate", fn=lambda state: state.current.content),
         ],
     )
     return node, finished

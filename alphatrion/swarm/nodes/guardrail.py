@@ -14,7 +14,7 @@ class GuardrailNode(DecisionNode):
     """
     Runs checks against the state, e.g. to reject an unsafe or malformed
     artifact before it is evaluated. Each check is called like an action fn,
-    check(state, value, **params), and returns either a bool, or a
+    check(state, **params), and returns either a bool, or a
     (bool, reason) tuple.
 
     If all checks pass, it routes to "pass", otherwise to "fail", with the
@@ -38,19 +38,14 @@ class GuardrailNode(DecisionNode):
     def _prepare(self, builder: "Builder") -> None:
         self._checks = [FnIO(builder.resolve(c), self, builder) for c in self.checks]
 
-    def input_type(self) -> Any:
-        # The format the checks agree on, Any if they take different ones.
-        types = {c.input_type for c in self._checks if c.takes_value} - {Any}
-        return types.pop() if len(types) == 1 else Any
-
     @property
     def required_routes(self) -> set[str]:
         return {self.FAIL}
 
-    async def decide(self, state: State, value: Any) -> tuple[str, Any]:
+    async def decide(self, state: State) -> tuple[str, Any]:
         reasons = []
         for check in self._checks:
-            result = await check(state, value)
+            result = await check(state)
             passed, reason = result if isinstance(result, tuple) else (result, None)
             if not passed:
                 reasons.append(reason or getattr(check.fn, "__name__", repr(check.fn)))

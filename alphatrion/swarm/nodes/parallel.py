@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, get_type_hints
 from pydantic import Field, PrivateAttr, model_validator
 
 from alphatrion.swarm.capabilities import Capability
-from alphatrion.swarm.formats import unify
 from alphatrion.swarm.nodes.base import (
     FnIO,
     FnRef,
@@ -26,7 +25,7 @@ JoinFn = Callable[..., Any]
 
 def join_best(state: State, results: list["GraphResult"]) -> Any:
     """Make the best scored artifact among the branches current, and output
-    the value of the branch that produced it."""
+    the output of the branch that produced it."""
     scored = [
         r
         for r in results
@@ -41,7 +40,7 @@ def join_best(state: State, results: list["GraphResult"]) -> Any:
 
 
 def join_all(state: State, results: list["GraphResult"]) -> list[Any]:
-    """Output the values of every branch, in branch order, without moving
+    """Output the outputs of every branch, in branch order, without moving
     the parent's current artifact."""
     return [r.output for r in results]
 
@@ -51,8 +50,8 @@ JOINS: dict[str, JoinFn] = {"best": join_best, "all": join_all}
 
 class ParallelNode(Node):
     """
-    Runs its nodes in n concurrent branches on the value it receives, e.g.
-    to explore several improvements of the current artifact at once. Each branch runs on a
+    Runs its nodes in n concurrent branches, e.g. to explore several
+    improvements of the current artifact at once. Each branch runs on a
     fork of the state: it shares the memory and the tree, but evolves its
     own current artifact from the parent's.
 
@@ -96,17 +95,11 @@ class ParallelNode(Node):
             raise ValueError(f"Parallel {self.name} requires wait <= n")
         return self
 
-    def input_type(self) -> Any:
-        return self._graph.input_type
-
-    def output_type(self, route: str | None = None, received: Any = Any) -> Any:
-        from alphatrion.swarm.graph import DONE, END
-
+    def output_type(self) -> Any:
         if self._join is join_best:
-            return unify(
-                self._graph.exit_types.get(DONE, [])
-                + self._graph.exit_types.get(END, [])
-            )
+            return self._graph.output_type
+        if self._join is join_all:
+            return list[self._graph.output_type]
         try:
             return get_type_hints(self._join).get("return", Any)
         except Exception:
@@ -120,14 +113,14 @@ class ParallelNode(Node):
             self._join = JOINS[self.join]
         else:
             self._join = builder.resolve(self.join)
-        self._join_io = FnIO(self._join, self, builder)
+        self._join_io = FnIO(self._join, self, builder, provided=("results",))
 
-    async def run(self, state: State, value: Any) -> NodeResult:
+    async def run(self, state: State) -> NodeResult:
         from alphatrion.swarm.graph import GraphStatus
 
         async def branch(i: int) -> tuple[int, "GraphResult"]:
             branch_state = state.fork(f"{self.name}[{i}]")
-            return i, await self._graph.run(state=branch_state, value=value)
+            return i, await self._graph.run(state=branch_state)
 
         need = self.n if self.wait is None else self.wait
         tasks = [asyncio.create_task(branch(i)) for i in range(self.n)]
@@ -159,7 +152,7 @@ class ParallelNode(Node):
             )
 
         results = [r for _, r in sorted(finished, key=lambda x: x[0])]
-        output = await self._join_io(state, results)
+        output = await self._join_io(state, results=results)
         if isinstance(output, NodeResult):
             return output
         return NodeResult(output=output)

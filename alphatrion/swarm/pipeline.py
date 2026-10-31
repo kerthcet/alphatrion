@@ -101,6 +101,9 @@ class Builder:
         self._names: set[str] = set()
         self._scope: str | None = None
         self._loading: list[Path] = []
+        # The nodes the node being built can reference: those that always
+        # run before it, and always have an output when they do.
+        self._available: dict[str, Node] = {}
 
     def resolve(self, ref: FnRef) -> NodeFn:
         if callable(ref):
@@ -158,6 +161,19 @@ class Builder:
             host = str((self._base_dir / path).resolve())
             mounts.append((mount.model_copy(update={"source": host}), None))
         return RuntimePlan(backend, spec, mounts)
+
+    def output_of(self, where: str, name: str) -> Any:
+        """The output format of the node a reference ${nodes.name.output}
+        names, which must always run before the node referencing it, with an
+        output: earlier in the same block, or before the block, but not in a
+        branch it may skip, nor a node that has none, like a decision."""
+        node = self._available.get(name)
+        if node is None:
+            raise ValueError(
+                f"{where} is ${{nodes.{name}.output}}, but {name} is not a node "
+                "that always runs before it with an output"
+            )
+        return node.output_type()
 
     def node(self, node: Node) -> Node:
         if node.name in self._names:
@@ -234,8 +250,18 @@ class Builder:
         is already in the graph when it is wired."""
         if not nodes:
             raise ValueError(f"Graph {graph.name} has an empty block of nodes")
+        # Each node can reference the nodes before the block, and those
+        # earlier in it that always have an output, unless a branch may
+        # bypass them, as on a route the node chose it has none.
+        outer = self._available
+        running = dict(outer)
+        before: dict[str, dict[str, Node]] = {}
         for node in nodes:
+            before[node.name] = self._available = dict(running)
             self.node(node)
+            if node.output_type() is not None and not node.branches:
+                running[node.name] = node
+        self._available = outer
         for node in reversed(nodes):
             graph.add_node(node)
             routes = node.exit if isinstance(node.exit, dict) else {}
@@ -249,8 +275,11 @@ class Builder:
                 if route != "default":
                     graph.add_edge(node.name, self._exit(graph, node, target), route)
             for route, branch in node.branches.items():
-                # An empty branch does nothing and continues with after.
+                # An empty branch does nothing and continues with after. A
+                # branch sees what its node did, without the node's output.
+                self._available = before[node.name]
                 target = self._block(graph, branch, after) if branch else after
+                self._available = outer
                 graph.add_edge(node.name, target, route)
 
             default = routes.get("default") or (

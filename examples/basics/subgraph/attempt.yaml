@@ -3,13 +3,17 @@
 # this one, so a rejected variant skips the evaluation.
 name: attempt
 nodes:
-  - name: propose                   # -> Artifact
+  - name: propose
     type: action
     fn: propose
-  - name: guard                     # Artifact, passed through
+  - name: guard
     type: guardrail
     checks: [not_duplicate]
+    params:
+      artifact: ${nodes.propose.output}
     exit: {fail: end}
-  - name: evaluate                  # Artifact -> Metrics
+  - name: evaluate
     type: evaluator
     fn: score
+    params:
+      artifact: ${nodes.propose.output}

@@ -14,9 +14,9 @@ pip install alphatrion[all]
   - Nodes run in the order they are listed.
   - `branches: {route: [nodes]}` runs nested nodes for a route of the node, then continues with the node after it, unless a nested node exits first. A route with neither a branch nor an exit falls through to the next node; a guardrail's `fail` must have one of them.
   - `exit` leaves the block: `end` finishes the current run and `raise` fails it, and in a loop, `continue` starts the next iteration and `break` ends the loop. Either one exit, like `exit: end`, or a map from routes to exits, like `exit: {fail: continue}`, with an optional `default` key.
-- **Graph** - What a pipeline is built into: a directed acyclic graph of nodes. Repetition is always a `loop` node, so a graph without loops always ends.
-- **Data flow** - A value flows along the connections: each node receives the output of the node before it, so node A's output format must be node B's input format, checked when the pipeline loads and again when it runs. Node functions declare their formats with type hints, `fn(state, value: Files) -> Execution`, and a function without a value parameter, `fn(state)`, takes any. Routing nodes (`condition`, `guardrail`, `switch`) pass the value through unchanged. A loop carries the value from one iteration into the next, and `continue` discards the iteration, so it starts again from the same value.
-- **Params and inputs** - A node function gets exactly what its node's `params` give it, besides the value, and nothing else: each param is a literal, `${params.name}` for a setting of the pipeline, or `${inputs.name}` for an input of the run. The pipeline's `params` are settings nodes share, and its `inputs` what every run must give, with `graph.run(inputs=...)`; neither reaches a function unless a node references it. The value is the one parameter the node doesn't give.
+- **Graph** - What a pipeline is built into: a directed acyclic graph of nodes. Repetition is always a `loop` node, so a graph without loops always ends. `graph.describe()` shows it as it runs: each node in order, with the format it outputs, its params, with the outputs they reference, its runtime and limits, and where its routes go.
+- **Data flow** - Nothing flows implicitly: a node gets another's output only by referencing it in its params, `${nodes.name.output}`, which must be a node that always runs before it with an output, earlier in its block or before it, not one in a branch that may be skipped. The reference's format must fit the parameter's type hint, like `fn(state, code: Files) -> Execution`, checked when the pipeline loads and again when it runs, and a subclass fits wherever its base does. A node has an output only on its own route: on a route its function chose, a failure's, or for a decision, which only decides, it has none.
+- **Params and inputs** - A node function gets exactly what its node's `params` give it, and nothing else: each param is a literal, `${params.name}` for a setting of the pipeline, `${inputs.name}` for an input of the run, or `${nodes.name.output}` for an output. The pipeline's `params` are settings nodes share, and its `inputs` what every run must give, with `graph.run(inputs=...)`; neither reaches a function unless a node references it.
 
     ```yaml
     params: {command: uv run train.py}
@@ -26,6 +26,7 @@ pip install alphatrion[all]
         type: action
         fn: experiment            # experiment(state, reply, workdir, command, train_timeout)
         params:
+          reply: ${nodes.propose.output}
           workdir: ${inputs.workdir}
           command: ${params.command}
           train_timeout: 600
@@ -34,26 +35,28 @@ pip install alphatrion[all]
   In a one-line `{...}`, quote a reference, like `{source: "${inputs.data}"}`, as YAML reads its `{` as a mapping. A parameter its node doesn't give, without a default, is an error when the pipeline loads, and so is a param no function takes, or a reference to a setting or input the pipeline doesn't have. A run missing an input fails before it starts. A subgraph file's params are defaults its parent's override.
 - **Formats** - The data formats shared by all nodes, in `alphatrion.swarm.formats`: `Text`, `Files`, `ModelRequest`, `ModelResponse`, `Execution` and `Metrics`. New formats subclass `Format`, and a subclass is accepted wherever its base is, so extending a format never breaks the nodes built on it.
 - **Node** - One step of the graph. Built-in types:
-  - `action` - Runs a function, e.g. calling an LLM to propose a new artifact. The function can also choose the route by returning a `NodeResult`, e.g. `NodeResult(route="skip")` for an exit like `exit: {skip: continue}`. A check that must never change belongs in a `guardrail`, which is always immutable.
-  - `guardrail` - Runs checks and routes to `pass` or `fail`, with the reasons of failed checks as output. `fail` must have an exit or a branch, e.g. `exit: {fail: raise}` to fail the run.
+  - `action` - Runs a function, e.g. calling an LLM to propose a new artifact. The function can also choose the route by returning a `NodeResult`, e.g. `NodeResult(route="skip")` for an exit like `exit: {skip: continue}`. On a route its function chose, the node has no output. A check that must never change belongs in a `guardrail`, which is always immutable.
+  - `guardrail` - Runs checks and routes to `pass` or `fail`, with the reasons of failed checks as details. `fail` must have an exit or a branch, e.g. `exit: {fail: raise}` to fail the run.
   - `condition` - Routes by a function that returns a bool, to `true` or `false`.
-  - `switch` - Routes by a function that returns the name of a case, e.g. which job to run next. The cases are the keys of its `branches` and `exit`; a value without a case fails the node, unless a `default` key catches it. An empty case, like `idle: []`, does nothing and continues.
-  - `evaluator` - Measures the value, e.g. an `Execution`, outputs `Metrics`, and records the primary score on the current artifact.
-  - `model_router` - Sends the `ModelRequest` it receives to one of several candidate models and outputs the `ModelResponse`. The `weighted` policy picks candidates by weight, and `fallback` tries them in order; a failed attempt, e.g. a timeout or a refusal, moves on to the next candidate. It routes to `ok`, or to `error` when every candidate failed, if handled, and fails otherwise. Claude models (`claude-*`) use the Anthropic API, `pip install alphatrion[anthropic]`, and other models any OpenAI-compatible API, with `base_url`:
+  - `switch` - Routes by a function that returns the name of a case, e.g. which job to run next. The cases are the keys of its `branches` and `exit`; a case without a branch or an exit fails the node, unless a `default` key catches it. An empty case, like `idle: []`, does nothing and continues.
+  - `evaluator` - Measures, e.g. the `Execution` its params reference, outputs `Metrics`, and records the primary score on the current artifact.
+  - `model_router` - Sends the `ModelRequest` its `request` param references to one of several candidate models, and outputs the `ModelResponse`. A candidate's `options` are extra settings for its model's API, passed as is, like `{output_config: {effort: high}}`. The `weighted` policy picks candidates by weight, and `fallback` tries them in order; a failed attempt, e.g. a timeout or a refusal, moves on to the next candidate. It routes to `ok`, or to `error` when every candidate failed, if handled, and fails otherwise. Claude models (`claude-*`) use the Anthropic API, `pip install alphatrion[anthropic]`, and other models any OpenAI-compatible API, with `base_url`:
 
     ```yaml
     - name: prompt
       type: action
-      fn: propose_prompt              # fn(state, code: Files) -> ModelRequest
+      fn: propose_prompt              # fn(state) -> ModelRequest
     - name: propose
       type: model_router
+      params:
+        request: ${nodes.prompt.output}
       policy: weighted
       candidates:
         - {model: claude-opus-5-5, weight: 0.3}
         - {model: claude-sonnet-5-5, weight: 0.7}
         - {model: llama-4, base_url: "http://localhost:8000/v1", weight: 0.1}
     ```
-  - `subgraph` - A node with `nodes`, or a `subgraph` file, and no `type`, runs those nodes as one node, so a coarse step can be detailed one level down and reused. It's written like a pipeline file, a name and its nodes, with the file relative to the pipeline referencing it. It works like a function call: it takes its first node's format and outputs what it ends with, an `end` inside returns to the parent, and its nodes are recorded in memory as `<subgraph>.<name>`.
+  - `subgraph` - A node with `nodes`, or a `subgraph` file, and no `type`, runs those nodes as one node, so a coarse step can be detailed one level down and reused. It's written like a pipeline file, a name and its nodes, with the file relative to the pipeline referencing it. It works like a function call: its nodes reference the outputs before it, its output is its last one, an `end` inside returns to the parent, and its nodes are recorded in memory as `<subgraph>.<name>`.
 
     ```yaml
     - name: attempt                   # inline
@@ -61,10 +64,10 @@ pip install alphatrion[all]
     - name: attempt                   # or from a file
       subgraph: attempt.yaml
     ```
-  - `loop` - Runs its `nodes` repeatedly, e.g. an agent exploring improvements. Inside, `exit: continue` starts the next iteration and `exit: break` ends the loop. It also ends when `until` returns true after an iteration, or after `max_iters` iterations (`null` loops until cancelled), and routes to `completed` or `max_iters`.
-  - `parallel` - Runs its `nodes` in `n` concurrent branches, each evolving its own artifact from the current one, then merges them with `join` (`best`, `all`, or a function). Each branch is its own run, so `end` or `raise` inside one only finishes or fails that branch. `wait: k` joins once k branches finished, ignoring failed ones, and cancels the rest; by default it waits for every branch to finish, and fails if any failed. A branch never stops another: only the parallel node decides when branches stop.
-  - Custom decision nodes subclass `DecisionNode` and implement `decide(state, value) -> (route, details)`; `condition`, `switch` and `guardrail` are built on it, and the value passes through them unchanged.
-  - Custom types subclass `Node` with their own `type` and fields, implement `run(state, value)`, declare `routes` if they route by name, which checks their `exit` and `branches` keys, and are passed to `build_graph(node_types=[...])`. A node is one class: its fields are its definition, the same in YAML and in code, and `run()` is what it does.
+  - `loop` - Runs its `nodes` repeatedly, e.g. an agent exploring improvements. Inside, `exit: continue` starts the next iteration and `exit: break` ends the loop. It also ends when `until` returns true after an iteration, or after `max_iters` iterations (`null` loops until cancelled), and routes to `completed` or `max_iters`. An iteration's nodes reference the outputs before the loop and their own, and what carries over is in the tree and the memory. The loop's output is the last output of the last iteration it didn't discard.
+  - `parallel` - Runs its `nodes` in `n` concurrent branches, each evolving its own artifact from the current one, then merges them with `join` (`best`, `all`, or a function), whose result is its output. Each branch is its own run, so `end` or `raise` inside one only finishes or fails that branch. `wait: k` joins once k branches finished, ignoring failed ones, and cancels the rest; by default it waits for every branch to finish, and fails if any failed. A branch never stops another: only the parallel node decides when branches stop.
+  - Custom decision nodes subclass `DecisionNode` and implement `decide(state) -> (route, details)`; `condition`, `switch` and `guardrail` are built on it, and have no output.
+  - Custom types subclass `Node` with their own `type` and fields, implement `run(state, ...)`, taking what they need as parameters with type hints, like `run(self, state, request: ModelRequest)`, which their `params` give, resolved and checked like a function's, `output_type()` if they have an output, declare `routes` if they route by name, which checks their `exit` and `branches` keys, and are passed to `build_graph(node_types=[...])`. A node is one class: its fields are its definition, the same in YAML and in code, and `run()` is what it does.
 
   Each type only accepts its own fields, so a misplaced or misspelled field is an error when the pipeline loads.
 - **Capabilities** - What a node may change in the state; reading it is always allowed. `commit` adds artifacts and moves the current one, `remember` writes the memory store, and `score` scores artifacts. Each type has the most its nodes can have: `action` has `commit` and `remember`, `parallel` has `commit` for its join, `evaluator` has `score`, and the others have none, so a `condition`, `switch` or `guardrail` only decides. A node can narrow them, like `capabilities: [commit]`, but never add any. Node functions get the state as a `StateView` limited to them, with a read-only tree, so `commit()` without `commit` raises a `CapabilityError`. Only an evaluator scores, from what its fn measures: `Artifact.score` is frozen, and `commit()` takes no score.

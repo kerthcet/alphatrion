@@ -25,7 +25,8 @@ from pydantic import (
 )
 
 from alphatrion.swarm.capabilities import Capability, StateView
-from alphatrion.swarm.context import current_inputs
+from alphatrion.swarm.context import current_inputs, current_outputs
+from alphatrion.swarm.formats import check_value, compatible, describe
 from alphatrion.swarm.state import State
 
 if TYPE_CHECKING:
@@ -38,6 +39,16 @@ NodeFn = Callable[..., Any]
 # A function reference: a registered name or an import path in YAML, or the
 # function itself in code.
 FnRef = str | NodeFn
+
+
+class _NoOutput:
+    def __repr__(self) -> str:
+        return "NO_OUTPUT"
+
+
+# The output of a node that has none this time, e.g. a loop whose every
+# iteration was discarded, so nothing references it.
+NO_OUTPUT = _NoOutput()
 
 
 class NodeResult(BaseModel):
@@ -73,31 +84,43 @@ def _without_result(hint: Any) -> Any:
 
 
 # A reference in a node's params: ${params.name} for a setting of the
-# pipeline, or ${inputs.name} for an input of the run.
-_REFERENCE = re.compile(r"^\$\{(params|inputs)\.(\w+)\}$")
+# pipeline, ${inputs.name} for an input of the run, or ${nodes.name.output}
+# for the output of a node that ran before.
+_REFERENCE = re.compile(r"^\$\{(?:(params|inputs)\.(\w+)|(nodes)\.(\w+)\.output)\}$")
 
 
 class FnIO:
     """
-    How a node function is called: fn(state, value, **params), or
-    fn(state, **params) for a function that doesn't take the value.
-
-    The function gets exactly its node's params, and nothing else: each is a
-    literal value, ${params.name} for a setting of the pipeline, or
-    ${inputs.name} for an input of the run, read when it's called. The value
-    is the one parameter its node doesn't give, and its annotation is the
-    input format. The return annotation is the output format. A parameter
-    the node doesn't give, beyond the value and those with a default, is an
-    error when the pipeline is built.
+    How a node function is called: fn(state, **params), with exactly its
+    node's params and nothing else. Each is a literal value, ${params.name}
+    for a setting of the pipeline, ${inputs.name} for an input of the run,
+    or ${nodes.name.output} for the output of a node that ran before. A
+    parameter the node doesn't give, and that has no default, is an error
+    when the pipeline is built, and so is a reference whose format doesn't
+    match the parameter's annotation. The return annotation is the output
+    format.
 
     The function gets the state as a StateView, limited to the capabilities
     of its node.
     """
 
-    def __init__(self, fn: NodeFn, node: "Node", builder: "Builder"):
+    def __init__(
+        self,
+        fn: NodeFn,
+        node: "Node",
+        builder: "Builder",
+        params: dict[str, Any] | None = None,
+        provided: tuple[str, ...] = (),
+        own: bool = False,
+    ):
+        """params are the ones fn is called with, the node's by default, and
+        provided the ones its node passes when it calls it, e.g. a parallel
+        node's results to its join. own is for a node's own run(), which
+        gets the state itself rather than a view of it."""
         self.fn = fn
         self.granted = node.granted
-        given = node.params
+        self._own = own
+        given = node.params if params is None else params
         try:
             hints = get_type_hints(fn)
         except Exception:
@@ -106,86 +129,128 @@ class FnIO:
             parameters = list(inspect.signature(fn).parameters.values())[1:]
         except (TypeError, ValueError):
             parameters = []
-        value = next(
-            (
-                p
-                for p in parameters
-                if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
-                and p.default is p.empty
-                and p.name not in given
-            ),
-            None,
-        )
-        self.takes_value = value is not None
-        self.input_type = hints.get(value.name, Any) if value is not None else Any
         self.output_type = _without_result(hints.get("return", Any))
 
         takes_any = any(p.kind == p.VAR_KEYWORD for p in parameters)
         # The params the function takes by name, None if it takes any.
         self.param_names: set[str] | None = (
-            None if takes_any else {p.name for p in parameters if p is not value}
+            None
+            if takes_any
+            else {
+                p.name
+                for p in parameters
+                if p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)
+            }
         )
         for p in parameters:
             missing = (
-                p is not value
-                and p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)
+                p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)
                 and p.default is p.empty
                 and p.name not in given
+                and p.name not in provided
             )
             if missing:
+                taker = (
+                    f"Node {node.name}"
+                    if own
+                    else f"Node {node.name} function {_name(fn)}"
+                )
                 raise ValueError(
-                    f"Node {node.name} function {_name(fn)} takes {p.name!r}, "
-                    "which the node doesn't give in its params"
+                    f"{taker} takes {p.name!r}, which the node doesn't give in "
+                    "its params"
                 )
         names = (
             given
             if takes_any
             else {k: v for k, v in given.items() if k in self.param_names}
         )
-        # The params resolved now, and the inputs read when it's called.
+        # The params resolved now, checked against the function's
+        # annotations, and the inputs and outputs read and checked when it's
+        # called.
+        self._node = node.name
+        self._hints = hints
         self._params: dict[str, Any] = {}
-        self._inputs: dict[str, str] = {}
+        self._reads: dict[str, tuple[str, str]] = {}
         for name, ref in names.items():
-            source, key = reference(f"Node {node.name} param {name}", ref)
+            where = f"Node {node.name} param {name}"
+            source, key = reference(where, ref)
             if source is None:
-                self._params[name] = ref
+                self._params[name] = self._check(name, ref)
             elif source == "params":
                 if key not in builder.params:
                     raise ValueError(
-                        f"Node {node.name} param {name} is ${{params.{key}}}, "
-                        "which is not a param of the pipeline"
+                        f"{where} is ${{params.{key}}}, which is not a param "
+                        "of the pipeline"
                     )
-                self._params[name] = builder.params[key]
-            else:
+                self._params[name] = self._check(name, builder.params[key])
+            elif source == "inputs":
                 if key not in builder.inputs:
                     raise ValueError(
-                        f"Node {node.name} param {name} is ${{inputs.{key}}}, "
-                        "which is not an input of the pipeline"
+                        f"{where} is ${{inputs.{key}}}, which is not an input "
+                        "of the pipeline"
                     )
-                self._inputs[name] = key
+                self._reads[name] = (source, key)
+            else:
+                fmt = builder.output_of(where, key)
+                hint = hints.get(name, Any)
+                if not compatible(fmt, hint):
+                    raise ValueError(
+                        f"{where} takes {describe(hint)}, but "
+                        f"${{nodes.{key}.output}} is {describe(fmt)}"
+                    )
+                self._reads[name] = (source, key)
         node._fns_io.append(self)
 
-    async def __call__(self, state: State, value: Any) -> Any:
-        view = StateView(state, self.granted)
-        inputs = current_inputs()
-        params = {**self._params, **{n: inputs[k] for n, k in self._inputs.items()}}
-        if self.takes_value:
-            return await call(self.fn, view, value, **params)
+    def _check(self, name: str, value: Any) -> Any:
+        """A param's value, checked against its annotation, and coerced if
+        needed, e.g. an int for a float."""
+        try:
+            return check_value(value, self._hints.get(name, Any))
+        except TypeError as e:
+            raise ValueError(f"Node {self._node} param {name}: {e}") from None
+
+    def _read(self, name: str, source: str, key: str) -> Any:
+        if source == "inputs":
+            return self._check(name, current_inputs()[key])
+        return self._check(name, read_output(self._node, key))
+
+    async def __call__(self, state: State, **provided: Any) -> Any:
+        view = state if self._own else StateView(state, self.granted)
+        params = {
+            **self._params,
+            **{n: self._read(n, *source) for n, source in self._reads.items()},
+            **provided,
+        }
         return await call(self.fn, view, **params)
 
 
+def read_output(node: str, key: str) -> Any:
+    """The output of node key, which node references."""
+    outputs = current_outputs()
+    if key not in outputs:
+        raise RuntimeError(
+            f"Node {node} reads ${{nodes.{key}.output}}, but {key} has no output: "
+            "it took a route without one"
+        )
+    return outputs[key]
+
+
 def reference(where: str, value: Any) -> tuple[str | None, str | None]:
-    """The source, params or inputs, and the name a value references, as in
-    ${params.name}, or (None, None) for a literal."""
+    """The source, params, inputs or nodes, and the name a value references,
+    as in ${params.name}, or (None, None) for a literal."""
     if not isinstance(value, str) or not value.startswith("${"):
         return None, None
     match = _REFERENCE.match(value)
     if match is None:
         raise ValueError(
-            f"{where} is {value!r}, but a reference is ${{params.name}} or "
-            "${inputs.name}"
+            f"{where} is {value!r}, but a reference is ${{params.name}}, "
+            "${inputs.name} or ${nodes.name.output}"
         )
-    return match.group(1), match.group(2)
+    return (
+        (match.group(1), match.group(2))
+        if match.group(1)
+        else ("nodes", match.group(4))
+    )
 
 
 def _name(fn: Any) -> str:
@@ -334,6 +399,8 @@ class Node(BaseModel):
     _prepared: bool = PrivateAttr(default=False)
     # The functions of the node, registered as they are resolved.
     _fns_io: list[FnIO] = PrivateAttr(default_factory=list)
+    # The node's own run(), if it takes params.
+    _run_io: FnIO | None = PrivateAttr(default=None)
     # The node's runtime, resolved from the pipeline's runtimes.
     _runtime: "RuntimePlan | None" = PrivateAttr(default=None)
 
@@ -385,6 +452,8 @@ class Node(BaseModel):
         if self.runtime is not None:
             self._runtime = builder.runtime(self.name, self.runtime)
         self._prepare(builder)
+        if len(inspect.signature(self.run).parameters) > 1:
+            self._run_io = FnIO(self.run, self, builder, own=True)
         # A param none of the node's functions takes is a mistake, e.g. a
         # misspelled name.
         if self._fns_io and all(f.param_names is not None for f in self._fns_io):
@@ -392,7 +461,7 @@ class Node(BaseModel):
             unused = set(self.params) - taken
             if unused:
                 raise ValueError(
-                    f"Node {self.name} has params none of its functions takes: "
+                    f"Node {self.name} has params it doesn't take: "
                     f"{', '.join(sorted(unused))}"
                 )
         self._prepared = True
@@ -405,20 +474,32 @@ class Node(BaseModel):
         """Routes that must have an outgoing edge, checked by the graph."""
         return set()
 
-    def input_type(self) -> Any:
-        """The format of the value the node takes, Any if it takes any."""
+    def output_type(self) -> Any:
+        """The format of the node's output, which later nodes reference as
+        ${nodes.name.output}, Any if unknown, None if it has none, like a
+        decision."""
         return Any
 
-    def output_type(self, route: str | None = None, received: Any = Any) -> Any:
-        """The format of the value the node returns on a route, Any if
-        unknown. received is the format flowing into the node, for nodes
-        that return the value they receive, like decisions."""
-        return Any
+    def outputs_on(self, route: str | None) -> bool:
+        """Whether the node has an output when it takes the route: on its own
+        route only, None for most nodes."""
+        return route is None
 
     @abstractmethod
-    async def run(self, state: State, value: Any) -> NodeResult:
-        """Run the node on the value from the node before it. The output of
-        the result is the value passed to the node after it."""
+    async def run(self, state: State) -> NodeResult:
+        """Run the node. The output of the result, on a route the node
+        outputs on, is what later nodes reference.
+
+        A node that takes something declares it as parameters of run, with
+        type hints, e.g. run(self, state, request: ModelRequest): its params
+        are then run's, resolved and checked like a function's, and passed
+        to it. Otherwise its params are its functions'."""
+
+    async def call(self, state: State) -> NodeResult:
+        """Run the node, with its params if run takes them."""
+        if self._run_io is not None:
+            return await self._run_io(state)
+        return await self.run(state)
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(name={self.name!r})"

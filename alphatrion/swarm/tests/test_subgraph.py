@@ -30,8 +30,8 @@ FUNCTIONS = {"read": read, "run": run, "measure": measure}
 EXPERIMENT = """
 name: experiment
 nodes:
-  - {name: run, type: action, fn: run}
-  - {name: measure, type: action, fn: measure}
+  - {name: run, type: action, fn: run, params: {code: "${nodes.read.output}"}}
+  - {name: measure, type: action, fn: measure, params: {result: "${nodes.run.output}"}}
 """
 
 
@@ -43,9 +43,20 @@ async def test_inline_subgraph():
             {
                 # No type: a node with nodes is a subgraph.
                 "name": "experiment",
+                # Its nodes reference the outputs before it, and their own.
                 "nodes": [
-                    {"name": "run", "type": "action", "fn": "run"},
-                    {"name": "measure", "type": "action", "fn": "measure"},
+                    {
+                        "name": "run",
+                        "type": "action",
+                        "fn": "run",
+                        "params": {"code": "${nodes.read.output}"},
+                    },
+                    {
+                        "name": "measure",
+                        "type": "action",
+                        "fn": "measure",
+                        "params": {"result": "${nodes.run.output}"},
+                    },
                 ],
             },
         ]
@@ -53,8 +64,7 @@ async def test_inline_subgraph():
     graph = build_graph(pipeline, functions=FUNCTIONS)
     assert isinstance(graph.nodes["experiment"], SubgraphNode)
     node = graph.nodes["experiment"]
-    # Its formats are those of its first and last nodes.
-    assert node.input_type() is Files
+    # Its output is that of its last node.
     assert node.output_type() is Metrics
 
     result = await graph.run()
@@ -114,15 +124,22 @@ async def test_end_returns_to_the_parent():
     experiment = SubgraphNode(
         name="experiment",
         nodes=[
-            ActionNode(name="done", fn=done, exit="end"),
-            ActionNode(name="never", fn=run),
+            ActionNode(
+                name="done",
+                fn=done,
+                params={"code": "${nodes.read.output}"},
+                exit="end",
+            ),
+            ActionNode(name="never", fn=run, params={"code": "${nodes.read.output}"}),
         ],
     )
     graph = (
         Graph()
         .add_node(ActionNode(name="read", fn=read))
         .add_node(experiment)
-        .add_node(ActionNode(name="run", fn=run))
+        .add_node(
+            ActionNode(name="run", fn=run, params={"code": "${nodes.read.output}"})
+        )
         .add_edge("read", "experiment")
         .add_edge("experiment", "run")
         .add_edge("run", END)
@@ -167,19 +184,27 @@ def test_invalid_subgraphs(tmp_path):
     with pytest.raises(ValueError, match="includes itself"):
         build_graph(tmp_path / "pipeline.yaml", functions=FUNCTIONS)
 
-    # Formats are checked at the boundary: read outputs Files, but the
-    # subgraph starts with measure, which takes an Execution.
+    # A reference from inside is checked like any: read outputs Files, but
+    # measure takes an Execution.
     pipeline = {
         "nodes": [
             {"name": "read", "type": "action", "fn": "read"},
             {
                 "name": "experiment",
-                "nodes": [{"name": "measure", "type": "action", "fn": "measure"}],
+                "nodes": [
+                    {
+                        "name": "measure",
+                        "type": "action",
+                        "fn": "measure",
+                        "params": {"result": "${nodes.read.output}"},
+                    }
+                ],
             },
         ]
     }
     with pytest.raises(
-        ValueError, match="read outputs Files, but experiment takes Execution"
+        ValueError,
+        match=r"takes Execution, but \$\{nodes.read.output\} is Files",
     ):
         build_graph(pipeline, functions=FUNCTIONS)
 
@@ -193,7 +218,12 @@ async def test_failure_inside_fails_the_parent():
         raise ValueError("boom")
 
     experiment = SubgraphNode(
-        name="experiment", nodes=[ActionNode(name="broken", fn=broken)]
+        name="experiment",
+        nodes=[
+            ActionNode(
+                name="broken", fn=broken, params={"code": "${nodes.read.output}"}
+            )
+        ],
     )
     graph = (
         Graph()

@@ -89,7 +89,11 @@ async def main():
         nodes=[
             ActionNode(name="seed", fn=seed),
             # The seed is evaluated, so explorers can backtrack to it.
-            EvaluatorNode(name="evaluate_seed", fn=score),
+            EvaluatorNode(
+                name="evaluate_seed",
+                fn=score,
+                params={"artifact": "${nodes.seed.output}"},
+            ),
             ParallelNode(
                 name="explore",
                 n=4,
@@ -102,7 +106,11 @@ async def main():
                         params={"target": 0.7},
                         nodes=[
                             ActionNode(name="propose", fn=propose),
-                            EvaluatorNode(name="evaluate", fn=score),
+                            EvaluatorNode(
+                                name="evaluate",
+                                fn=score,
+                                params={"artifact": "${nodes.propose.output}"},
+                            ),
                             ActionNode(
                                 name="keep_or_backtrack",
                                 fn=keep_or_backtrack,

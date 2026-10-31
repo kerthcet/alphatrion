@@ -2,8 +2,14 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import Field, PrivateAttr
 
-from alphatrion.swarm.formats import compatible, describe, unify
-from alphatrion.swarm.nodes.base import FnIO, FnRef, Node, NodeList, NodeResult
+from alphatrion.swarm.nodes.base import (
+    NO_OUTPUT,
+    FnIO,
+    FnRef,
+    Node,
+    NodeList,
+    NodeResult,
+)
 from alphatrion.swarm.state import State
 
 if TYPE_CHECKING:
@@ -13,16 +19,16 @@ if TYPE_CHECKING:
 
 class LoopNode(Node):
     """
-    Runs its nodes repeatedly, e.g. an agent exploring improvements.
+    Runs its nodes repeatedly, e.g. an agent exploring improvements. Each
+    iteration's nodes reference the outputs before the loop and their own,
+    not a previous iteration's: what carries over is in the tree and the
+    memory. A `continue` exit discards the iteration.
 
-    The value flows through the iterations: the first gets the loop's input,
-    and each next one the output of the previous one, so the body ends with
-    the format it starts with. A `continue` exit discards the iteration, so
-    the next one starts from the same value again. The loop ends at a
-    `break` exit, when until(state, value, **params) returns true after an
-    iteration, or after max_iters iterations, and outputs the value. With max_iters=None
-    and no until, it loops until its task is cancelled. An `end` exit inside
-    ends the run the loop is in.
+    The loop ends at a `break` exit, when until(state, **params) returns
+    true after an iteration, or after max_iters iterations. With
+    max_iters=None and no until, it loops until its task is cancelled. An
+    `end` exit inside ends the run the loop is in. Its output is the last
+    output of the last iteration that wasn't discarded.
 
     It routes to "completed" when ended by break or until, and to
     "max_iters" when it runs out of iterations. A failed iteration, e.g.
@@ -41,7 +47,7 @@ class LoopNode(Node):
     until: FnRef | None = Field(
         default=None,
         description="Ends the loop when it returns true after an iteration, "
-        "resolved like an action fn.",
+        "resolved like an action fn, with the loop's params.",
     )
 
     _graph: "Graph" = PrivateAttr()
@@ -50,62 +56,44 @@ class LoopNode(Node):
     def _prepare(self, builder: "Builder") -> None:
         from alphatrion.swarm.graph import BREAK, CONTINUE, NEXT
 
-        # Running off the end of the body carries its value into the next
-        # iteration, and continue discards the iteration.
         self._graph = builder.graph(
             self.name, self.nodes, exits={CONTINUE, BREAK, NEXT}, after=NEXT
         )
         if self.until is not None:
             self._until = FnIO(builder.resolve(self.until), self, builder)
 
-        # Each iteration's output is the next one's input, so it must have
-        # the format the body takes.
-        carried = self._graph.input_type
-        for exit in (NEXT, BREAK):
-            for fmt in self._graph.exit_types.get(exit, []):
-                if not compatible(fmt, carried):
-                    raise ValueError(
-                        f"Loop {self.name} body takes {describe(carried)}, but "
-                        f"ends an iteration with {describe(fmt)}"
-                    )
+    def output_type(self) -> Any:
+        return self._graph.output_type
 
-    def input_type(self) -> Any:
-        return self._graph.input_type
+    def outputs_on(self, route: str | None) -> bool:
+        return True
 
-    def output_type(self, route: str | None = None, received: Any = Any) -> Any:
-        from alphatrion.swarm.graph import BREAK, NEXT
-
-        if self._graph.input_type is not Any:
-            return self._graph.input_type
-        return unify(
-            self._graph.exit_types.get(NEXT, []) + self._graph.exit_types.get(BREAK, [])
-        )
-
-    async def run(self, state: State, value: Any) -> NodeResult:
-        from alphatrion.swarm.graph import BREAK, END, NEXT, GraphStatus
+    async def run(self, state: State) -> NodeResult:
+        from alphatrion.swarm.graph import BREAK, CONTINUE, END, GraphStatus
 
         iterations = 0
+        output = NO_OUTPUT
         while self.max_iters is None or iterations < self.max_iters:
-            result = await self._graph.run(state=state, value=value)
+            result = await self._graph.run(state=state)
             iterations += 1
             if result.status == GraphStatus.FAILED:
                 raise RuntimeError(
                     f"Loop {self.name} failed at iteration {iterations}: {result.error}"
                 )
             details = {"iterations": iterations}
+            # A continue discards the iteration, e.g. to drop a candidate
+            # that didn't improve.
+            if result.exit != CONTINUE:
+                output = result.output
             if result.exit in (END, BREAK):
                 return NodeResult(
                     route=self.COMPLETED,
-                    output=result.output,
+                    output=output,
                     details=details,
                     exit=END if result.exit == END else None,
                 )
-            # A continue discards the iteration, keeping the value it started
-            # with, e.g. to drop a candidate that didn't improve.
-            if result.exit == NEXT:
-                value = result.output
-            if self._until is not None and await self._until(state, value):
-                return NodeResult(route=self.COMPLETED, output=value, details=details)
+            if self._until is not None and await self._until(state):
+                return NodeResult(route=self.COMPLETED, output=output, details=details)
         return NodeResult(
-            route=self.MAX_ITERS, output=value, details={"iterations": iterations}
+            route=self.MAX_ITERS, output=output, details={"iterations": iterations}
         )

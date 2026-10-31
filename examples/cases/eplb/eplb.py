@@ -131,6 +131,9 @@ def attempts(state: State) -> str:
     or why it was rejected."""
     lines = []
     for entry in state.memory.history():
+        if "artifact_id" not in entry.data:
+            # A node that failed, which fails the run.
+            continue
         route, details = entry.data.get("route"), entry.data.get("details")
         description = state.tree.get(entry.data["artifact_id"]).metadata.get(
             "description", ""
