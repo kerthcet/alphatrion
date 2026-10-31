@@ -30,7 +30,7 @@ EXITS = (END, RAISE, CONTINUE, BREAK)
 
 class Pipeline(BaseModel):
     """The definition of a graph, written like structured code: nodes run in
-    order, branches nest the nodes to run for a route, loop and parallel nodes
+    order, branches nest the nodes to run for a choice, loop and parallel nodes
     nest repeated and concurrent nodes, and end, continue and break are the
     only jumps."""
 
@@ -252,7 +252,7 @@ class Builder:
             raise ValueError(f"Graph {graph.name} has an empty block of nodes")
         # Each node can reference the nodes before the block, and those
         # earlier in it that always have an output, unless a branch may
-        # bypass them, as on a route the node chose it has none.
+        # bypass them, as after a choice the node made it has none.
         outer = self._available
         running = dict(outer)
         before: dict[str, dict[str, Node]] = {}
@@ -264,25 +264,25 @@ class Builder:
         self._available = outer
         for node in reversed(nodes):
             graph.add_node(node)
-            routes = node.exit if isinstance(node.exit, dict) else {}
-            self._check_routes(node, [*routes, *node.branches])
-            for route, target in routes.items():
-                if route in node.branches:
+            choices = node.exit if isinstance(node.exit, dict) else {}
+            self._check_choices(node, [*choices, *node.branches])
+            for choice, target in choices.items():
+                if choice in node.branches:
                     raise ValueError(
-                        f"Node {node.name} route {route!r} has both an exit "
+                        f"Node {node.name} choice {choice!r} has both an exit "
                         "and a branch"
                     )
-                if route != "default":
-                    graph.add_edge(node.name, self._exit(graph, node, target), route)
-            for route, branch in node.branches.items():
+                if choice != "default":
+                    graph.add_edge(node.name, self._exit(graph, node, target), choice)
+            for choice, branch in node.branches.items():
                 # An empty branch does nothing and continues with after. A
                 # branch sees what its node did, without the node's output.
                 self._available = before[node.name]
                 target = self._block(graph, branch, after) if branch else after
                 self._available = outer
-                graph.add_edge(node.name, target, route)
+                graph.add_edge(node.name, target, choice)
 
-            default = routes.get("default") or (
+            default = choices.get("default") or (
                 node.exit if isinstance(node.exit, str) else None
             )
             target = self._exit(graph, node, default) if default else after
@@ -291,17 +291,17 @@ class Builder:
         return after
 
     @staticmethod
-    def _check_routes(node: Node, keys: list[str]) -> None:
-        routes = node.routes
-        if routes is None:
+    def _check_choices(node: Node, keys: list[str]) -> None:
+        choices = node.choices
+        if choices is None:
             return
         for key in keys:
             # Any node can fail on a timeout or an error.
-            if key != "default" and key not in routes and key not in FAILURES:
-                expected = ", ".join(sorted(routes)) or "none"
+            if key != "default" and key not in choices and key not in FAILURES:
+                expected = ", ".join(sorted(choices)) or "none"
                 raise ValueError(
-                    f"Node {node.name} has no route {key!r}, "
-                    f"the routes of a {node.type} node are: {expected}, and "
+                    f"Node {node.name} has no choice {key!r}, "
+                    f"the choices of a {node.type} node are: {expected}, and "
                     "every node's timeout and error"
                 )
 

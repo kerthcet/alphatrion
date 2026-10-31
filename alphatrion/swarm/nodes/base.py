@@ -1,6 +1,5 @@
 import inspect
 import re
-import types
 from abc import abstractmethod
 from collections.abc import Callable
 from typing import (
@@ -8,9 +7,6 @@ from typing import (
     Annotated,
     Any,
     ClassVar,
-    Union,
-    get_args,
-    get_origin,
     get_type_hints,
 )
 
@@ -52,11 +48,11 @@ NO_OUTPUT = _NoOutput()
 
 
 class NodeResult(BaseModel):
-    """The outcome of a node execution. route selects the outgoing edge whose
+    """The outcome of a node execution. choice selects the outgoing edge whose
     `when` matches it, None selects the default edge. exit="end" ends the
     current run, which loop nodes use to pass on an end taken inside them."""
 
-    route: str | None = None
+    choice: str | None = None
     output: Any = None
     # What the node found, recorded in memory but not passed on, e.g. why a
     # guardrail failed. Passthrough nodes return their input as output.
@@ -71,16 +67,19 @@ async def call(fn: NodeFn, *args: Any, **kwargs: Any) -> Any:
     return result
 
 
-def _without_result(hint: Any) -> Any:
-    """The format a function returns, without NodeResult, which it returns
-    to choose a route rather than as its value."""
-    if hint is NodeResult:
-        return Any
-    if get_origin(hint) in (Union, types.UnionType):
-        args = [a for a in get_args(hint) if a is not NodeResult]
-        if len(args) < len(get_args(hint)):
-            return Union[tuple(args)] if len(args) > 1 else args[0]  # noqa: UP007
-    return hint
+class Choice(Exception):
+    """
+    Raised by a node function to make a choice rather than output, e.g.
+    raise Choice("skip", "the edits don't apply") for an exit like
+    `exit: {skip: continue}`. The node then has no output, and details are
+    recorded in memory. A choice is an outcome, not a failure, so it is never
+    retried; any other exception fails the node, on the error choice.
+    """
+
+    def __init__(self, choice: str, details: Any = None):
+        super().__init__(choice, details)
+        self.choice = choice
+        self.details = details
 
 
 # A reference in a node's params: ${params.name} for a setting of the
@@ -129,7 +128,7 @@ class FnIO:
             parameters = list(inspect.signature(fn).parameters.values())[1:]
         except (TypeError, ValueError):
             parameters = []
-        self.output_type = _without_result(hints.get("return", Any))
+        self.output_type = hints.get("return", Any)
 
         takes_any = any(p.kind == p.VAR_KEYWORD for p in parameters)
         # The params the function takes by name, None if it takes any.
@@ -230,7 +229,7 @@ def read_output(node: str, key: str) -> Any:
     if key not in outputs:
         raise RuntimeError(
             f"Node {node} reads ${{nodes.{key}.output}}, but {key} has no output: "
-            "it took a route without one"
+            "it made a choice without one"
         )
     return outputs[key]
 
@@ -275,8 +274,8 @@ def _seconds(v: Any) -> Any:
 Seconds = Annotated[float | None, BeforeValidator(_seconds)]
 
 
-def _route_keys(v: Any) -> Any:
-    # YAML parses `true:` keys as bools, map them to the condition routes.
+def _choice_keys(v: Any) -> Any:
+    # YAML parses `true:` keys as bools, map them to the condition choices.
     if isinstance(v, dict):
         return {
             (("true" if k else "false") if isinstance(k, bool) else k): t
@@ -330,10 +329,10 @@ class Node(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # The routes the node can take, only to check its exit and branches keys
-    # when a pipeline is built. None means any route, for nodes whose
+    # The choices the node can take, only to check its exit and branches keys
+    # when a pipeline is built. None means any choice, for nodes whose
     # functions choose it, e.g. by returning a NodeResult.
-    routes: ClassVar[frozenset[str] | None] = None
+    choices: ClassVar[frozenset[str] | None] = None
     # Nodes that judge the artifact are never improved, so the system can't
     # change what counts as an improvement.
     ALWAYS_IMMUTABLE: ClassVar[bool] = False
@@ -352,12 +351,12 @@ class Node(BaseModel):
         default=None,
         description="An exit to take after this node: end, or in a loop, continue "
         "to start the next iteration and break to end the loop. Either one exit, "
-        "or a map from the node routes to exits, with an optional default key. "
-        "Routes without an exit or a branch fall through to the next node.",
+        "or a map from the node chooses exits, with an optional default key. "
+        "Choices without an exit or a branch fall through to the next node.",
     )
     branches: dict[str, NodeList] = Field(
         default_factory=dict,
-        description="The nodes to run for each route of this node. A branch "
+        description="The nodes to run for each choice of this node. A branch "
         "continues with the node after this one when it is done.",
     )
     mutable: bool = Field(
@@ -372,14 +371,14 @@ class Node(BaseModel):
         gt=0,
         description="The most a node may run, e.g. 60s or 10m, every function "
         "and nested node included. On expiry the engine cancels it and stops "
-        "its runtime, and it fails on the timeout route. None for no limit.",
+        "its runtime, and it fails on the timeout choice. None for no limit.",
     )
     retries: int = Field(
         default=0,
         ge=0,
         description="How many times to run the node again after it fails, by "
-        "raising or timing out, each time from where it started. A route it "
-        "chooses, e.g. a guardrail's fail, is an outcome, never retried.",
+        "raising or timing out, each time from where it started. A choice it "
+        "makes, e.g. a guardrail's fail, is an outcome, never retried.",
     )
     runtime: str | None = Field(
         default=None,
@@ -406,8 +405,8 @@ class Node(BaseModel):
 
     @field_validator("exit", "branches", mode="before")
     @classmethod
-    def bool_routes(cls, v: Any) -> Any:
-        return _route_keys(v)
+    def bool_choices(cls, v: Any) -> Any:
+        return _choice_keys(v)
 
     @field_validator("mutable")
     @classmethod
@@ -470,8 +469,8 @@ class Node(BaseModel):
         pass
 
     @property
-    def required_routes(self) -> set[str]:
-        """Routes that must have an outgoing edge, checked by the graph."""
+    def required_choices(self) -> set[str]:
+        """Choices that must have an outgoing edge, checked by the graph."""
         return set()
 
     def output_type(self) -> Any:
@@ -480,14 +479,14 @@ class Node(BaseModel):
         decision."""
         return Any
 
-    def outputs_on(self, route: str | None) -> bool:
-        """Whether the node has an output when it takes the route: on its own
-        route only, None for most nodes."""
-        return route is None
+    def outputs_on(self, choice: str | None) -> bool:
+        """Whether the node has an output after the choice: for most nodes,
+        only with None, no choice, its normal path."""
+        return choice is None
 
     @abstractmethod
     async def run(self, state: State) -> NodeResult:
-        """Run the node. The output of the result, on a route the node
+        """Run the node. The output of the result, with a choice the node
         outputs on, is what later nodes reference.
 
         A node that takes something declares it as parameters of run, with

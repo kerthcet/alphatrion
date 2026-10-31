@@ -97,7 +97,7 @@ async def main():
     result = await graph.run()
 
     loop = result.state.memory.history(node="search")[0].data
-    print(f"status: {result.status.value}, loop ended by: {loop['route']}")
+    print(f"status: {result.status.value}, loop ended by: {loop['choice']}")
     if result.error:
         print(f"error: {result.error}")
 

@@ -17,9 +17,8 @@ class ActionNode(Node):
     reference as ${nodes.name.output}, and its return annotation is the
     output format.
 
-    fn can also return a NodeResult to choose the route itself, e.g.
-    NodeResult(route="skip", details=reason) for an exit like
-    `exit: {skip: continue}`. On a route it chooses, the node has no output.
+    fn can also raise Choice to make a choice rather than output, e.g.
+    raise Choice("skip", reason) for an exit like `exit: {skip: continue}`.
     """
 
     CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
@@ -42,7 +41,4 @@ class ActionNode(Node):
         return self._fn.output_type
 
     async def run(self, state: State) -> NodeResult:
-        result = await self._fn(state)
-        if isinstance(result, NodeResult):
-            return result
-        return NodeResult(output=result)
+        return NodeResult(output=await self._fn(state))

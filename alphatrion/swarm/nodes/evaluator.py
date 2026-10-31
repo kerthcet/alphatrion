@@ -22,7 +22,7 @@ class EvaluatorNode(Node):
     ALWAYS_IMMUTABLE: ClassVar[bool] = True
 
     CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset({Capability.SCORE})
-    routes: ClassVar[frozenset[str] | None] = frozenset()
+    choices: ClassVar[frozenset[str] | None] = frozenset()
 
     type: Literal["evaluator"] = "evaluator"
     fn: FnRef = Field(description="Measures, resolved like an action fn.")

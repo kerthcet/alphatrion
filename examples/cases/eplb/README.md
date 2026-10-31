@@ -3,16 +3,16 @@
 The expert parallelism load balancer of [ADRS's eplb example](https://github.com/UCB-ADRS/ADRS/tree/main/openevolve/examples/ADRS/eplb) as a pipeline, on CPU. vLLM's EPLB places the experts of a Mixture-of-Experts model on GPUs, replicating the busy ones, so that no GPU waits on another. A model proposes edits to its algorithm, `rebalance_experts`, and each program is scored on a recorded expert-load trace by how balanced its placement is on the next window, and how fast it runs.
 
 ```
-seed        -> Execution      action  runtime: eval  timeout: 60s  routes: rejected -> raise
+seed        -> Execution      action  runtime: eval  timeout: 60s  choices: rejected -> raise
 score_seed  -> Metrics        evaluator  params: run=${nodes.seed.output}
 evolve      -> Metrics        loop  max_iters: 20
   prompt    -> ModelRequest   action  params: instructions=${inputs.instructions}
-  propose   -> ModelResponse  model_router  params: request=${nodes.prompt.output}  routes: error -> continue
-  attempt   -> Execution      action  params: reply=${nodes.propose.output}  runtime: eval  timeout: 60s  routes: skip -> continue, rejected -> continue, timeout -> continue
+  propose   -> ModelResponse  model_router  params: request=${nodes.prompt.output}  choices: error -> continue
+  attempt   -> Execution      action  params: reply=${nodes.propose.output}  runtime: eval  timeout: 60s  choices: skip -> continue, rejected -> continue, timeout -> continue
   evaluate  -> Metrics        evaluator  params: run=${nodes.attempt.output}
 ```
 
-This is `graph.describe()`: what each step outputs, what it's given, with the outputs it references, its runtime and limits, and where its routes go.
+This is `graph.describe()`: what each step outputs, what it's given, with the outputs it references, its runtime and limits, and where its choices go.
 
 - [pipeline.yaml](./pipeline.yaml) - The pipeline.
 - [eplb.py](./eplb.py) - What each node does.

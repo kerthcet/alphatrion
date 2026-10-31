@@ -8,14 +8,14 @@ from alphatrion.swarm import (
     END,
     RAISE,
     ActionNode,
+    Choice,
+    ChoiceError,
     ConditionNode,
     EvaluatorNode,
     Graph,
     GraphStatus,
     GuardrailNode,
     LoopNode,
-    NodeResult,
-    RoutingError,
     State,
 )
 
@@ -88,12 +88,12 @@ async def test_loop_max_iters():
     result = await build_rsi_graph(target=100, max_iters=5).run()
     assert result.status == GraphStatus.COMPLETED
     loop = result.state.memory.history(node="improve")[0]
-    assert loop.data["route"] == "max_iters"
+    assert loop.data["choice"] == "max_iters"
     assert loop.data["details"] == {"iterations": 5}
 
 
 @pytest.mark.asyncio
-async def test_guardrail_routes_on_fail():
+async def test_guardrail_choices_on_fail():
     calls = []
 
     def propose_negative(state: State):
@@ -116,7 +116,7 @@ async def test_guardrail_routes_on_fail():
 
     assert result.status == GraphStatus.COMPLETED
     guard = result.state.memory.history(node="guard")
-    assert [e.data["route"] for e in guard] == ["fail", "pass"]
+    assert [e.data["choice"] for e in guard] == ["fail", "pass"]
     assert guard[0].data["details"] == ["artifact is negative"]
     assert guard[1].data["details"] == []
 
@@ -146,7 +146,7 @@ async def test_guardrail_raise_fails_the_run():
     result = await graph.run()
 
     assert result.status == GraphStatus.FAILED
-    assert "guard raised on route 'fail'" in result.error
+    assert "guard raised on choice 'fail'" in result.error
     assert "artifact is negative" in result.error
 
 
@@ -161,10 +161,10 @@ def test_guardrail_requires_fail_edge():
 
 
 @pytest.mark.asyncio
-async def test_async_nodes_and_custom_route():
+async def test_async_nodes_and_custom_choice():
     # kind is an input of the run, which classify gets as a param.
     async def classify(state: State, kind: str):
-        return NodeResult(route=kind)
+        raise Choice(kind)
 
     graph = (
         Graph(inputs={"kind"})
@@ -179,13 +179,13 @@ async def test_async_nodes_and_custom_route():
 
     result = await graph.run(inputs={"kind": "small"})
     assert result.path == ["classify", "small"]
-    # An unmatched route falls back to the default edge.
+    # An unmatched choice falls back to the default edge.
     result = await graph.run(inputs={"kind": "medium"})
     assert result.path == ["classify", "large"]
 
 
 @pytest.mark.asyncio
-async def test_unmatched_route_fails():
+async def test_unmatched_choice_fails():
     graph = (
         Graph()
         .add_node(ConditionNode(name="check", fn=lambda state: False))
@@ -193,7 +193,7 @@ async def test_unmatched_route_fails():
     )
     result = await graph.run()
     assert result.status == GraphStatus.FAILED
-    assert RoutingError.__name__ in result.error
+    assert ChoiceError.__name__ in result.error
 
 
 @pytest.mark.asyncio

@@ -171,7 +171,7 @@ nodes:
     type: loop
     max_iters: 4
     nodes:
-      # More than two routes: a switch picks one by name.
+      # More than two choices: a switch picks one by name.
       - name: pick
         type: switch
         fn: pick
@@ -217,7 +217,7 @@ async def test_branches(tmp_path):
 
     assert result.status == GraphStatus.COMPLETED
     assert log == [
-        # A branch continues with the node after its routing node.
+        # A branch continues with the node after its deciding node.
         "propose",
         "register",
         "after",
@@ -325,7 +325,7 @@ async def test_custom_type(tmp_path):
     "nodes, error",
     [
         ([{"name": "a", "type": "unknown"}], ValueError),
-        # exit and branches keys must be routes of the node.
+        # exit and branches keys must be choices of the node.
         (
             [
                 {
@@ -407,7 +407,7 @@ async def test_custom_type(tmp_path):
             ],
             ValueError,
         ),
-        # A route can't both exit and branch.
+        # A choice can't both exit and branch.
         (
             [
                 {

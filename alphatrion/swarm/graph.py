@@ -17,7 +17,7 @@ from alphatrion.swarm.context import (
 )
 from alphatrion.swarm.formats import check_value, describe, unify
 from alphatrion.swarm.nodes import Node, NodeResult
-from alphatrion.swarm.nodes.base import NO_OUTPUT
+from alphatrion.swarm.nodes.base import NO_OUTPUT, Choice
 from alphatrion.swarm.runtimes import Runtime
 from alphatrion.swarm.state import State
 
@@ -35,7 +35,7 @@ BREAK = "break"
 NEXT = "__next__"
 DONE = "__done__"
 RESERVED = {END, RAISE, CONTINUE, BREAK, NEXT, DONE}
-# The routes of a node that failed, after its retries: it ran past its
+# The choices of a node that failed, after its retries: it ran past its
 # timeout, or raised. Every node has them, and a run fails on one the node
 # doesn't handle. The value passes through, as the node never produced one.
 TIMEOUT = "timeout"
@@ -72,7 +72,7 @@ class GraphResult(BaseModel):
     error: str | None = None
 
 
-class RoutingError(Exception):
+class ChoiceError(Exception):
     pass
 
 
@@ -80,7 +80,7 @@ class Graph:
     """
     A directed acyclic graph of nodes. Execution starts at the entry node,
     and after each node, follows the outgoing edge whose `when` matches the
-    node route, or the default edge (when=None) if no edge matches.
+    node choice, or the default edge (when=None) if no edge matches.
 
     Cycles are rejected: repetition is a LoopNode, bounded by its own
     max_iters, so a graph always ends unless one of its nodes runs forever.
@@ -169,11 +169,11 @@ class Graph:
         if self.entry is None:
             raise ValueError(f"Graph {self.name} has no nodes")
         for name, node in self._nodes.items():
-            routes = {e.when for e in self._edges[name]}
-            missing = node.required_routes - routes
+            choices = {e.when for e in self._edges[name]}
+            missing = node.required_choices - choices
             if missing:
                 raise ValueError(
-                    f"Node {name} requires edges for routes {sorted(missing)}"
+                    f"Node {name} requires edges for choices {sorted(missing)}"
                 )
         cycle = self._find_cycle()
         if cycle:
@@ -202,7 +202,7 @@ class Graph:
         """
         Each node, in the order they run, with what it outputs, what it's
         given: its params, with the references to the outputs it takes, its
-        runtime, timeout and retries, and where its routes go. The nodes nested in a loop, a parallel node or
+        runtime, timeout and retries, and where its choices go. The nodes nested in a loop, a parallel node or
         a subgraph are indented under it. Built from the graph itself, it
         is always what runs.
         """
@@ -236,7 +236,7 @@ class Graph:
                 notes.append(f"timeout: {node.timeout:g}s")
             if node.retries:
                 notes.append(f"retries: {node.retries}")
-            routes = [
+            choices = [
                 f"{edge.when} -> {edge.target}"
                 for edge in self._edges[name]
                 if edge.when is not None
@@ -245,9 +245,9 @@ class Graph:
             # Running off the last node ends the graph, which goes unsaid.
             ends = default.target == END and name == order[-1]
             if default.target in (END, RAISE, CONTINUE, BREAK) and not ends:
-                routes.append(f"-> {default.target}")
-            if routes:
-                notes.append("routes: " + ", ".join(routes))
+                choices.append(f"-> {default.target}")
+            if choices:
+                notes.append("choices: " + ", ".join(choices))
             rows.append(("  " * depth + name, io, "  ".join(notes)))
             nested = getattr(node, "_graph", None)
             if isinstance(nested, Graph):
@@ -301,13 +301,13 @@ class Graph:
             return END
         default = None
         for edge in edges:
-            if edge.when is not None and edge.when == result.route:
+            if edge.when is not None and edge.when == result.choice:
                 return edge.target
             if edge.when is None:
                 default = edge
         if default is not None:
             return default.target
-        raise RoutingError(f"Node {source} has no edge for route {result.route!r}")
+        raise ChoiceError(f"Node {source} has no edge for choice {result.choice!r}")
 
     async def run(
         self,
@@ -349,12 +349,12 @@ class Graph:
 
             try:
                 result = await self._execute(node, state)
-                # Only a node's own routes have an output, checked against
+                # A node has an output only with the choices it outputs on, checked against
                 # its format, which the nodes referencing it were checked
                 # against when the graph was built.
                 produced = (
-                    result.route not in FAILURES
-                    and node.outputs_on(result.route)
+                    result.choice not in FAILURES
+                    and node.outputs_on(result.choice)
                     and result.output is not NO_OUTPUT
                 )
                 if produced:
@@ -384,7 +384,7 @@ class Graph:
                 state,
                 node,
                 {
-                    "route": result.route,
+                    "choice": result.choice,
                     "output": result.output,
                     "details": result.details,
                     "artifact_id": state.current_id,
@@ -398,7 +398,7 @@ class Graph:
             # when their nodes are sync functions.
             await asyncio.sleep(0)
             if current == RAISE:
-                error = f"{node.name} raised on route {result.route!r}"
+                error = f"{node.name} raised on choice {result.choice!r}"
                 if result.details not in (None, [], ""):
                     error += f": {result.details}"
                 return GraphResult(
@@ -423,7 +423,7 @@ class Graph:
         """
         Run a node, up to 1 + retries times, each from where it started: in
         a fresh runtime if it has one, and cancelled at its timeout. A node
-        still failing takes its timeout or error route if it handles it, and
+        still failing takes its timeout or error choice if it handles it, and
         fails the run otherwise.
         """
         start = state.current_id
@@ -433,6 +433,9 @@ class Graph:
                 async with self._runtime(node):
                     async with asyncio.timeout(node.timeout) as limit:
                         return await node.call(state)
+            except Choice as choice:
+                # A choice the node's function chose: an outcome, not retried.
+                return NodeResult(choice=choice.choice, details=choice.details)
             except Exception as e:
                 if (
                     isinstance(e, TimeoutError)
@@ -450,10 +453,10 @@ class Graph:
                 self._record(
                     state,
                     node,
-                    {"attempt": attempt, "route": failure, "details": details},
+                    {"attempt": attempt, "choice": failure, "details": details},
                 )
         if any(edge.when == failure for edge in self._edges[node.name]):
-            return NodeResult(route=failure, details=details)
+            return NodeResult(choice=failure, details=details)
         if failure == TIMEOUT:
             raise TimeoutError(f"Node {node.name} {details}")
         raise last

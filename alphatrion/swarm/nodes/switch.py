@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 class SwitchNode(DecisionNode):
     """
-    Routes by fn(state, **params), which returns the name of a case,
+    Chooses by fn(state, **params), which returns the name of a case,
     e.g. to pick which job to run next. The cases are the keys of the node's
     branches and exit. A case without a key fails the node, unless a
     `default` key catches every other case.

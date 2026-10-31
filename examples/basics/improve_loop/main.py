@@ -68,7 +68,7 @@ async def main():
     lineage = state.tree.lineage(best.id)
     loop = state.memory.history(node="improve")[0].data["details"]
     rejected = sum(
-        e.data["route"] == "fail" for e in state.memory.history(node="guard")
+        e.data["choice"] == "fail" for e in state.memory.history(node="guard")
     )
     print(f"status: {result.status.value}, iterations: {loop['iterations']}")
     print(f"artifacts: {len(state.tree)}, rejected duplicates: {rejected}")

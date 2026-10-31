@@ -1,5 +1,6 @@
 from alphatrion.swarm.nodes.action import ActionNode
 from alphatrion.swarm.nodes.base import (
+    Choice,
     FnRef,
     Node,
     NodeFn,
@@ -50,6 +51,7 @@ __all__ = [
     "NodeFn",
     "NodeList",
     "NodeResult",
+    "Choice",
     "ParallelNode",
     "SwitchNode",
 ]

@@ -60,12 +60,12 @@ class ModelRouterNode(Node):
     and the fallback policy in their listed order. A failed attempt, e.g. a
     timeout, a rate limit or a refusal, moves on to the next candidate.
 
-    It routes to "ok", with the failed attempts as details. When every
-    candidate fails, it routes to "error", without an output, if the node
-    handles that route, and fails otherwise.
+    It chooses "ok", with the failed attempts as details. When every
+    candidate fails, it chooses "error", without an output, if the node
+    handles that choice, and fails otherwise.
     """
 
-    routes: ClassVar[frozenset[str] | None] = frozenset({"ok", "error"})
+    choices: ClassVar[frozenset[str] | None] = frozenset({"ok", "error"})
 
     type: Literal["model_router"] = "model_router"
     candidates: list[Candidate] = Field(min_length=1)
@@ -135,8 +135,8 @@ class ModelRouterNode(Node):
     def output_type(self) -> Any:
         return ModelResponse
 
-    def outputs_on(self, route: str | None) -> bool:
-        return route == "ok"
+    def outputs_on(self, choice: str | None) -> bool:
+        return choice == "ok"
 
     async def run(self, state: State, request: ModelRequest) -> NodeResult:
         errors = []
@@ -149,10 +149,10 @@ class ModelRouterNode(Node):
             except ModelError as e:
                 errors.append(str(e))
                 continue
-            return NodeResult(route="ok", output=response, details=errors)
+            return NodeResult(choice="ok", output=response, details=errors)
 
         if self._handles_error:
-            return NodeResult(route="error", details=errors)
+            return NodeResult(choice="error", details=errors)
         raise RuntimeError(
             f"Model router {self.name}: every candidate failed: {'; '.join(errors)}"
         )

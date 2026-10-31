@@ -6,13 +6,13 @@ from alphatrion.swarm import (
     BREAK,
     END,
     ActionNode,
+    Choice,
     ConditionNode,
     EvaluatorNode,
     Graph,
     GraphStatus,
     GuardrailNode,
     LoopNode,
-    NodeResult,
     ParallelNode,
     State,
 )
@@ -184,7 +184,7 @@ async def test_parallel_join_all_and_custom():
 
     def pick(state: State, results, target: float):
         best = max(r.state.current.score for r in results)
-        return NodeResult(route="good" if best >= target else "bad")
+        raise Choice("good" if best >= target else "bad")
 
     graph = (
         Graph()
@@ -395,4 +395,4 @@ async def test_raise_fails_the_run_from_any_node():
     )
     result = await wrap(loop).run()
     assert result.status == GraphStatus.FAILED
-    assert "bad raised on route 'true'" in result.error
+    assert "bad raised on choice 'true'" in result.error

@@ -1,7 +1,7 @@
 import pytest
 import yaml
 
-from alphatrion.swarm import ActionNode, GraphStatus, NodeResult, Text, build_graph
+from alphatrion.swarm import ActionNode, Choice, GraphStatus, Text, build_graph
 
 
 def draft(state) -> Text:
@@ -12,9 +12,9 @@ def shout(state, text: Text, suffix: str) -> Text:
     return Text(content=text.content.upper() + suffix)
 
 
-def too_long(state, text: Text, limit: int) -> Text | NodeResult:
+def too_long(state, text: Text, limit: int) -> Text:
     if len(text.content) > limit:
-        return NodeResult(route="skip", details=f"longer than {limit}")
+        raise Choice("skip", f"longer than {limit}")
     return text
 
 
@@ -45,7 +45,7 @@ async def test_a_function_gets_its_node_s_params():
 
 
 @pytest.mark.asyncio
-async def test_a_chosen_route_has_no_output():
+async def test_a_chosen_choice_has_no_output():
     result = await build(
         f"""
         nodes:
@@ -59,7 +59,7 @@ async def test_a_chosen_route_has_no_output():
     ).run()
     assert result.status == GraphStatus.COMPLETED, result.error
     entry = result.state.memory.history(node="check")[-1]
-    assert (entry.data["route"], entry.data["details"]) == ("skip", "longer than 3")
+    assert (entry.data["choice"], entry.data["details"]) == ("skip", "longer than 3")
     assert entry.data["output"] is None
     # The run's output is its last one, draft's.
     assert result.output == Text(content="draft")
@@ -70,7 +70,7 @@ def test_formats():
         name="f", fn=too_long, params={"text": {"content": "x"}, "limit": 3}
     )
     build_graph({"nodes": [node]})
-    # too_long's NodeResult isn't a format: it only chooses a route.
+    # Raising Choice chooses a choice, so the output is only ever a Text.
     assert node.output_type() is Text
 
 
@@ -139,6 +139,33 @@ def test_describe():
     assert graph.describe().splitlines() == [
         "draft    -> Text  action",
         "improve  -> Text  loop  max_iters: 3",
-        "  check  -> Text  action  params: text=${nodes.draft.output}, limit=${inputs.n}  timeout: 5s  retries: 1  routes: skip -> continue",
+        "  check  -> Text  action  params: text=${nodes.draft.output}, limit=${inputs.n}  timeout: 5s  retries: 1  choices: skip -> continue",
         "  shout  -> Text  action  params: text=${nodes.check.output}, suffix=!",
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_raised_choice_is_an_outcome_never_retried():
+    calls = []
+
+    def skip(state):
+        calls.append(1)
+        raise Choice("skip", "nothing to do")
+
+    graph = build_graph(
+        {
+            "nodes": [
+                {
+                    "name": "f",
+                    "type": "action",
+                    "fn": skip,
+                    "retries": 3,
+                    "exit": {"skip": "end"},
+                }
+            ]
+        }
+    )
+    result = await graph.run()
+    assert result.status == GraphStatus.COMPLETED, result.error
+    assert calls == [1]
+    assert result.state.memory.history(node="f")[-1].data["details"] == "nothing to do"

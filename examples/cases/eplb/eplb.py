@@ -17,12 +17,12 @@ import re
 from pathlib import Path
 
 from alphatrion.swarm import (
+    Choice,
     Execution,
     Files,
     Metrics,
     ModelRequest,
     ModelResponse,
-    NodeResult,
     ScoreMode,
     State,
 )
@@ -39,7 +39,7 @@ RUNNER = (
 METRICS = ("combined_score", "balancedness_score", "speed_score")
 
 
-async def seed(state: State) -> Execution | NodeResult:
+async def seed(state: State) -> Execution:
     """Commit ADRS's initial program as the root artifact, and evaluate it."""
     program = (UPSTREAM / "initial_program.py").read_text()
     state.commit(
@@ -67,21 +67,21 @@ def prompt(state: State, instructions: str) -> ModelRequest:
     )
 
 
-async def attempt(state: State, reply: ModelResponse) -> Execution | NodeResult:
+async def attempt(state: State, reply: ModelResponse) -> Execution:
     """Apply the reply's edits to the current program, as a new program, and
     evaluate it. A reply whose edits don't apply, or change more than the
     evolve block, is skipped, since there's nothing to evaluate."""
     code = state.current.content.files[PROGRAM]
     new = edited(code, reply)
     if new is None:
-        return NodeResult(
-            route="skip",
-            details="the reply has no edits matching the program exactly once",
+        raise Choice(
+            "skip",
+            "the reply has no edits matching the program exactly once",
         )
     if START not in new or END not in new or outside(new) != outside(code):
-        return NodeResult(
-            route="skip",
-            details="the edits change the program outside the evolve block",
+        raise Choice(
+            "skip",
+            "the edits change the program outside the evolve block",
         )
     match = re.search(r"^Description:\s*(.+)$", reply.text, re.M)
     description = match.group(1).strip() if match else "no description"
@@ -101,7 +101,7 @@ def measure(state: State, run: Execution) -> Metrics:
     )
 
 
-async def evaluate(state: State, program: str) -> Execution | NodeResult:
+async def evaluate(state: State, program: str) -> Execution:
     """Run ADRS's evaluator on a program, in the node's runtime, where the
     trace is mounted at /data and ADRS's code at /upstream, and the node's
     timeout ends it. A program the evaluator doesn't score, as it crashed or
@@ -117,7 +117,7 @@ async def evaluate(state: State, program: str) -> Execution | NodeResult:
         reason = f"the program failed: {scores['error']}"
     else:
         return run
-    return NodeResult(route="rejected", details=reason)
+    raise Choice("rejected", reason)
 
 
 def result(run: Execution) -> dict | None:
@@ -134,15 +134,15 @@ def attempts(state: State) -> str:
         if "artifact_id" not in entry.data:
             # A node that failed, which fails the run.
             continue
-        route, details = entry.data.get("route"), entry.data.get("details")
+        choice, details = entry.data.get("choice"), entry.data.get("details")
         description = state.tree.get(entry.data["artifact_id"]).metadata.get(
             "description", ""
         )
-        if entry.node == "attempt" and route == "skip":
+        if entry.node == "attempt" and choice == "skip":
             lines.append(f"- not applied: {details}")
-        elif entry.node == "attempt" and route == "timeout":
+        elif entry.node == "attempt" and choice == "timeout":
             lines.append(f"- rejected: the evaluation {details}")
-        elif entry.node == "attempt" and route == "rejected":
+        elif entry.node == "attempt" and choice == "rejected":
             lines.append(f"- rejected, {description}: {details}")
         elif entry.node in ("score_seed", "evaluate"):
             values = entry.data["output"].values

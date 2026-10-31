@@ -25,7 +25,7 @@ class SubgraphNode(Node):
     <subgraph>.<name>.
     """
 
-    routes: ClassVar[frozenset[str] | None] = frozenset()
+    choices: ClassVar[frozenset[str] | None] = frozenset()
 
     type: Literal["subgraph"] = "subgraph"
     nodes: NodeList | None = Field(default=None, description="The inline nodes.")

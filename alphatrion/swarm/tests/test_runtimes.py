@@ -19,7 +19,7 @@ def build(pipeline: str, functions: dict, base_dir: Path | None = None):
 
 
 @pytest.mark.asyncio
-async def test_a_node_past_its_timeout_takes_the_timeout_route():
+async def test_a_node_past_its_timeout_takes_the_timeout_choice():
     async def slow(state):
         await asyncio.sleep(10)
 
@@ -38,7 +38,7 @@ async def test_a_node_past_its_timeout_takes_the_timeout_route():
     assert result.status == GraphStatus.COMPLETED, result.error
     assert result.output == "recovered"
     entry = result.state.memory.history(node="slow")[-1]
-    assert (entry.data["route"], entry.data["details"]) == (
+    assert (entry.data["choice"], entry.data["details"]) == (
         "timeout",
         "timed out after 0.1s",
     )
@@ -93,7 +93,7 @@ async def test_retries_start_each_attempt_from_where_the_node_started():
 
 
 @pytest.mark.asyncio
-async def test_an_error_after_the_retries_takes_the_error_route():
+async def test_an_error_after_the_retries_takes_the_error_choice():
     def broken(state):
         raise ValueError("boom")
 
@@ -116,7 +116,7 @@ async def test_an_error_after_the_retries_takes_the_error_route():
 
 
 @pytest.mark.asyncio
-async def test_a_route_is_an_outcome_never_retried():
+async def test_a_choice_is_an_outcome_never_retried():
     calls = []
 
     def check(state):

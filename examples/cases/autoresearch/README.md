@@ -3,17 +3,17 @@
 [autoresearch](https://github.com/karpathy/autoresearch) as a pipeline: a model proposes an edit to `train.py`, it trains for a fixed 5 minutes, and the edit is kept if `val_bpb` improved, else reverted. It runs until stopped.
 
 ```
-baseline        -> Execution      action  params: workdir=${inputs.workdir}, command=${params.command}, train_timeout=${params.train_timeout}  runtime: train  routes: crashed -> raise
+baseline        -> Execution      action  params: workdir=${inputs.workdir}, command=${params.command}, train_timeout=${params.train_timeout}  runtime: train  choices: crashed -> raise
 score_baseline  -> Metrics        evaluator  params: run=${nodes.baseline.output}
 research        -> Files          loop
   prompt        -> ModelRequest   action  params: instructions=${inputs.instructions}, workdir=${inputs.workdir}
-  propose       -> ModelResponse  model_router  params: request=${nodes.prompt.output}  routes: error -> continue
-  experiment    -> Execution      action  params: reply=${nodes.propose.output}, workdir=${inputs.workdir}, command=${params.command}, train_timeout=${params.train_timeout}  runtime: train  routes: skip -> continue, crashed -> continue
+  propose       -> ModelResponse  model_router  params: request=${nodes.prompt.output}  choices: error -> continue
+  experiment    -> Execution      action  params: reply=${nodes.propose.output}, workdir=${inputs.workdir}, command=${params.command}, train_timeout=${params.train_timeout}  runtime: train  choices: skip -> continue, crashed -> continue
   evaluate      -> Metrics        evaluator  params: run=${nodes.experiment.output}
   settle        -> Files          action  params: metrics=${nodes.evaluate.output}, workdir=${inputs.workdir}
 ```
 
-This is `graph.describe()`: what each step outputs, what it's given, with the outputs it references, its runtime and limits, and where its routes go.
+This is `graph.describe()`: what each step outputs, what it's given, with the outputs it references, its runtime and limits, and where its choices go.
 
 - [pipeline.yaml](./pipeline.yaml) - The pipeline.
 - [autoresearch.py](./autoresearch.py) - What each node does: git, the training run, and `results.tsv`.

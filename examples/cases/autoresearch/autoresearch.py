@@ -16,12 +16,12 @@ import subprocess
 from pathlib import Path
 
 from alphatrion.swarm import (
+    Choice,
     Execution,
     Files,
     Metrics,
     ModelRequest,
     ModelResponse,
-    NodeResult,
     State,
 )
 
@@ -55,10 +55,10 @@ def log_result(
 
 async def baseline(
     state: State, workdir: str, command: str, train_timeout: float
-) -> Execution | NodeResult:
+) -> Execution:
     """Start results.tsv, untracked by git, commit the current train.py as
     the root artifact every experiment is compared with, and train it once.
-    A crashed baseline ends the step on the crashed route."""
+    A crashed baseline ends the step on the crashed choice."""
     repo = Path(workdir)
     (repo / RESULTS).write_text(HEADER)
     exclude = repo / ".git" / "info" / "exclude"
@@ -73,7 +73,7 @@ async def baseline(
     )
     run = await train(state, command, train_timeout)
     if crashed(run):
-        return NodeResult(route="crashed", details=run.stderr[-2000:])
+        raise Choice("crashed", run.stderr[-2000:])
     log_result(state, workdir, measure(state, run), "keep")
     return run
 
@@ -104,17 +104,17 @@ async def experiment(
     workdir: str,
     command: str,
     train_timeout: float,
-) -> Execution | NodeResult:
+) -> Execution:
     """Run one experiment: apply the reply's edits to train.py, commit them
     as a new artifact, and train. A reply whose edits don't each match
     train.py exactly once is skipped, as nothing is tried, and a run that
-    crashes is logged and reverted, ending the step on the crashed route."""
+    crashes is logged and reverted, ending the step on the crashed choice."""
     code = state.current.content.files[TRAIN]
     edits = EDIT.findall(reply.text)
     if not edits or any(code.count(search) != 1 for search, _ in edits):
-        return NodeResult(
-            route="skip",
-            details="the reply has no edits matching train.py exactly once",
+        raise Choice(
+            "skip",
+            "the reply has no edits matching train.py exactly once",
         )
     for search, replace in edits:
         code = code.replace(search, replace, 1)
@@ -132,7 +132,7 @@ async def experiment(
     if crashed(run):
         log_result(state, workdir, None, "crash")
         revert(state, workdir)
-        return NodeResult(route="crashed", details=run.stderr[-2000:])
+        raise Choice("crashed", run.stderr[-2000:])
     return run
 
 

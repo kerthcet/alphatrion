@@ -30,14 +30,14 @@ class LoopNode(Node):
     `end` exit inside ends the run the loop is in. Its output is the last
     output of the last iteration that wasn't discarded.
 
-    It routes to "completed" when ended by break or until, and to
+    It chooses "completed" when ended by break or until, and to
     "max_iters" when it runs out of iterations. A failed iteration, e.g.
     one that took a `raise` exit, fails this node too.
     """
 
     COMPLETED: ClassVar[str] = "completed"
     MAX_ITERS: ClassVar[str] = "max_iters"
-    routes: ClassVar[frozenset[str] | None] = frozenset({COMPLETED, MAX_ITERS})
+    choices: ClassVar[frozenset[str] | None] = frozenset({COMPLETED, MAX_ITERS})
 
     type: Literal["loop"] = "loop"
     nodes: NodeList = Field(min_length=1, description="The body of the loop.")
@@ -65,7 +65,7 @@ class LoopNode(Node):
     def output_type(self) -> Any:
         return self._graph.output_type
 
-    def outputs_on(self, route: str | None) -> bool:
+    def outputs_on(self, choice: str | None) -> bool:
         return True
 
     async def run(self, state: State) -> NodeResult:
@@ -87,13 +87,13 @@ class LoopNode(Node):
                 output = result.output
             if result.exit in (END, BREAK):
                 return NodeResult(
-                    route=self.COMPLETED,
+                    choice=self.COMPLETED,
                     output=output,
                     details=details,
                     exit=END if result.exit == END else None,
                 )
             if self._until is not None and await self._until(state):
-                return NodeResult(route=self.COMPLETED, output=output, details=details)
+                return NodeResult(choice=self.COMPLETED, output=output, details=details)
         return NodeResult(
-            route=self.MAX_ITERS, output=output, details={"iterations": iterations}
+            choice=self.MAX_ITERS, output=output, details={"iterations": iterations}
         )

@@ -18,15 +18,16 @@ from alphatrion.swarm.graph import (
     CONTINUE,
     END,
     RAISE,
+    ChoiceError,
     Edge,
     Graph,
     GraphResult,
     GraphStatus,
-    RoutingError,
 )
 from alphatrion.swarm.memory import Memory, MemoryEntry
 from alphatrion.swarm.nodes import (
     ActionNode,
+    Choice,
     ConditionNode,
     DecisionNode,
     EvaluatorNode,
@@ -77,8 +78,9 @@ __all__ = [
     "MemoryEntry",
     "Node",
     "NodeResult",
+    "Choice",
     "ParallelNode",
-    "RoutingError",
+    "ChoiceError",
     "ScoreMode",
     "State",
     "SwitchNode",

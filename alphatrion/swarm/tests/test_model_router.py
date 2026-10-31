@@ -79,12 +79,12 @@ async def test_fallback_on_errors_and_refusals():
 async def test_every_candidate_failing():
     client = FakeClient(failures={"a": ModelError("down"), "b": ModelError("down")})
 
-    # Without handling the error route, the node fails.
+    # Without handling the error choice, the node fails.
     result = await build(client, [router()]).run()
     assert result.status == GraphStatus.FAILED
     assert "every candidate failed" in result.error
 
-    # With it, the node routes to error, without an output, and the branch
+    # With it, the node chooses error, without an output, and the branch
     # can still reference the request before it.
     seen = []
 
@@ -197,7 +197,7 @@ def test_invalid_router():
         build(FakeClient(), [router(candidates=[])])
     with pytest.raises(ValueError):
         build(FakeClient(), [router(policy="random")])
-    with pytest.raises(ValueError, match="has no route 'fail'"):
+    with pytest.raises(ValueError, match="has no choice 'fail'"):
         build(FakeClient(), [router(exit={"fail": "end"})])
 
 

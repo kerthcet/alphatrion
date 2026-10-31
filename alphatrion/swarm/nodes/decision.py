@@ -17,14 +17,14 @@ class DecisionNode(Node):
 
     @abstractmethod
     async def decide(self, state: State) -> tuple[str, Any]:
-        """Return the route to take, and the details to record."""
+        """Return the choose take, and the details to record."""
 
     def output_type(self) -> Any:
         return None
 
-    def outputs_on(self, route: str | None) -> bool:
+    def outputs_on(self, choice: str | None) -> bool:
         return False
 
     async def run(self, state: State) -> NodeResult:
-        route, details = await self.decide(state)
-        return NodeResult(route=route, details=details)
+        choice, details = await self.decide(state)
+        return NodeResult(choice=choice, details=details)

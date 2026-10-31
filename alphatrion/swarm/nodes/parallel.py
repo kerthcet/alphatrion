@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from alphatrion.swarm.pipeline import Builder
 
 # A join takes the parent state, the results of the finished branches in
-# branch order, and the node params. It can return a NodeResult to route.
+# branch order, and the node params. It can raise Choice to make a choice.
 JoinFn = Callable[..., Any]
 
 
@@ -152,7 +152,4 @@ class ParallelNode(Node):
             )
 
         results = [r for _, r in sorted(finished, key=lambda x: x[0])]
-        output = await self._join_io(state, results=results)
-        if isinstance(output, NodeResult):
-            return output
-        return NodeResult(output=output)
+        return NodeResult(output=await self._join_io(state, results=results))

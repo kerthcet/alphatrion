@@ -17,7 +17,7 @@ class GuardrailNode(DecisionNode):
     check(state, **params), and returns either a bool, or a
     (bool, reason) tuple.
 
-    If all checks pass, it routes to "pass", otherwise to "fail", with the
+    If all checks pass, it chooses "pass", otherwise to "fail", with the
     reasons of the failed checks as details, recorded in memory. "fail" must have an exit or a
     branch, so a failed check can't be ignored: e.g. `exit: {fail: raise}`
     fails the run.
@@ -26,7 +26,7 @@ class GuardrailNode(DecisionNode):
     PASS: ClassVar[str] = "pass"
     FAIL: ClassVar[str] = "fail"
     ALWAYS_IMMUTABLE: ClassVar[bool] = True
-    routes: ClassVar[frozenset[str] | None] = frozenset({PASS, FAIL})
+    choices: ClassVar[frozenset[str] | None] = frozenset({PASS, FAIL})
 
     type: Literal["guardrail"] = "guardrail"
     checks: list[FnRef] = Field(
@@ -39,7 +39,7 @@ class GuardrailNode(DecisionNode):
         self._checks = [FnIO(builder.resolve(c), self, builder) for c in self.checks]
 
     @property
-    def required_routes(self) -> set[str]:
+    def required_choices(self) -> set[str]:
         return {self.FAIL}
 
     async def decide(self, state: State) -> tuple[str, Any]:

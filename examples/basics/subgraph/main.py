@@ -70,7 +70,7 @@ async def main():
     for node in ("attempt.propose", "attempt.guard", "attempt.evaluate", "attempt"):
         print(f"  {node:<17} ran {runs[node]} times")
     rejected = sum(
-        entry.data["route"] == "fail"
+        entry.data["choice"] == "fail"
         for entry in state.memory.history(node="attempt.guard")
     )
     print(f"  duplicates rejected before evaluation: {rejected}")

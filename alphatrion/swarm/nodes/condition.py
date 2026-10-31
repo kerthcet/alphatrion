@@ -12,12 +12,11 @@ if TYPE_CHECKING:
 
 class ConditionNode(DecisionNode):
     """
-    Routes by fn(state, **params), which returns a bool: True routes
-    to "true" and False to "false". To route among more options, use a
-    switch.
+    Chooses by fn(state, **params), which returns a bool: True chooses
+    "true" and False "false". To choose among more options, use a switch.
     """
 
-    routes: ClassVar[frozenset[str] | None] = frozenset({"true", "false"})
+    choices: ClassVar[frozenset[str] | None] = frozenset({"true", "false"})
 
     type: Literal["condition"] = "condition"
     fn: FnRef = Field(description="Returns a bool, resolved like an action fn.")
